@@ -553,8 +553,6 @@ B列「転記先分類」とC列「詳細グループ」に推奨値を自動設
   SpreadsheetApp.getUi().alert(helpMessage);
 }
 
-
-
 /**
  * =================================================================================
  * 【ステップ３】マッピングを適用して転記
@@ -780,7 +778,7 @@ function isSafeText(text) {
   }
 
   // 制御文字をチェック
-  if (/[\x00-\x1F\x7F]/.test(str)) {
+  if (/[ -]/.test(str)) {
     Logger.log(`セキュリティ警告: 制御文字を検出: ${str.substring(0, 50)}`);
     return false;
   }
@@ -822,9 +820,7 @@ function callGeminiApi(file) {
     const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + API_KEY;
     const prompt = `このファイルには、「貸借対照表」「損益計算書」「販売費及び一般管理費内訳書」が含まれています。これらの書類から、記載されているすべての勘定科目と金額のペアを抽出してください。出力する際は、必ず以下の順番を守ってください。1. 「貸借対照表」のすべての項目を上から順に 2. 「損益計算書」のすべての項目を上から順に 3. 「販売費及び一般管理費内訳書」のすべての項目を上から順に。小計、合計、内訳項目も含め、勘定科目と金額が記載されている行は例外なくすべてを抽出対象とします。出力形式は「勘定科目,金額」のCSV形式にしてください。金額に通貨記号(¥)や桁区切りのカンマ(,)は含めず、半角数字のみで出力してください。タイトル、日付、会社名など、勘定科目ではないテキスト行は無視してください。例:\n流動資産,50000000\n現金及び預金,20000000\n売上高,123456789`;
     const requestBody = {
-      "contents": [{
-        "parts": [{ "text": prompt }, { "inline_data": { "mime_type": file.getMimeType(), "data": Utilities.base64Encode(file.getBlob().getBytes()) } }]
-      }], "generationConfig": { "temperature": 0.0, "topP": 1, "maxOutputTokens": 8192 }
+      "contents": [{"parts": [{ "text": prompt }, { "inline_data": { "mime_type": file.getMimeType(), "data": Utilities.base64Encode(file.getBlob().getBytes()) } }] }], "generationConfig": { "temperature": 0.0, "topP": 1, "maxOutputTokens": 8192 }
     };
     const options = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(requestBody), 'muteHttpExceptions': true };
     const response = UrlFetchApp.fetch(API_ENDPOINT, options);
@@ -1082,7 +1078,7 @@ function classifyItemToTable(itemName) {
   }
 
 
-  // ===== 優先度B: PL項目（その他損益など、より具体的なものから）=====
+  // ===== 優先度B: PL項目（その他損益など、より具体的なものから）===== 
   // ⑤ その他損益
   if (normalized.match(/受取利息|預金利息|貸付金利息|受取配当金|配当金|有価証券利息|雑収入|受取手数料/)) {
     return { tableKey: '⑤その他損益比較表', categoryKey: '営業外収益' };
@@ -1409,7 +1405,8 @@ function transferToTable03_VariableCosts(sheet, ocrItems) {
     const maxRows = group.maxDataRows;
     const sortedItems = sortByCurrentPeriod(items);
 
-    Logger.log(`\n③-${groupName}: ${sortedItems.length}件を転記`);
+    Logger.log(`
+③-${groupName}: ${sortedItems.length}件を転記`);
 
     // 個別転記
     for (let i = 0; i < Math.min(sortedItems.length, maxRows); i++) {
@@ -1851,13 +1848,12 @@ function transferToBSTable(sheet, classifiedBsData, bsConfig) {
   return transferLog;
 }
 
-
 /**
- * =================================================================================
- * 統合処理：マッピングシートのデータをエクセルに一括転記する
- * =================================================================================
+ * マッピングシートから分類情報を読み込み、該当するOCR項目を整理
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss - スプレッドシート
+ * @param {Array<Array>} ocrData - OCRデータ [[項目名, 金額], ...]
+ * @return {Object} {{tableKey: [{itemName, amounts, mappedTable, mappedGroup}, ...]}, ...}
  */
-function startStep3_transferDataToExcel() {
 function classifyOcrDataByMapping(ss, ocrData) {
   const classifiedData = {
     // PL
@@ -1937,210 +1933,10 @@ function classifyOcrDataByMapping(ss, ocrData) {
 }
 
 /**
- * Google Sheetsのマッピングシートから各表への転記データを実行
- * エクセルファイルとGoogle Sheetsを同期
- * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss - アクティブなスプレッドシート
- * @param {Array<Array>} ocrData - [[項目名, 金額], ...] 形式のOCRデータ
+ * =================================================================================
+ * 統合処理：マッピングシートのデータをエクセルに一括転記する
+ * =================================================================================
  */
-function executeExcelTransfer(ss, ocrData) {
-  Logger.log(`====== エクセル転記処理を開始します ======`);
-  Logger.log(`処理対象: ${ocrData.length}件の項目`);
-
-  const allTransferLogs = [];
-  let successCount = 0;
-  let errorCount = 0;
-
-  try {
-    Logger.log(`③デバッグ: 分類前の状態を確認します`);
-    Logger.log(`転記先シート名: ${CONFIG.EXCEL_TRANSFER_CONFIG.SHEET_NAME}`);
-
-    // OCRデータを各表別に分類（マッピングシートの値を使用）
-    const classifiedData = classifyOcrDataByMapping(ss, ocrData);
-
-    Logger.log(`③デバッグ: 分類完了`);
-    Logger.log(`分類結果:`);
-    Object.keys(classifiedData).forEach(tableKey => {
-      const data = classifiedData[tableKey];
-      let count = 0;
-      if (Array.isArray(data)) {
-        count = data.length;
-      } else {
-        // オブジェクト型の場合（⑤その他損益比較表）
-        count = Object.values(data).reduce((sum, arr) => sum + (arr.length || 0), 0);
-      }
-      Logger.log(`  ${tableKey}: ${count}件`);
-    });
-
-    Logger.log(`③デバッグ: 転記先シート取得を試みます`);
-    // Google Sheets上の対応シートを取得
-    const targetSheet = ss.getSheetByName(CONFIG.EXCEL_TRANSFER_CONFIG.SHEET_NAME);
-    if (!targetSheet) {
-      Logger.log(`③デバッグ: シート「${CONFIG.EXCEL_TRANSFER_CONFIG.SHEET_NAME}」が見つかりません`);
-      Logger.log(`③デバッグ: 利用可能なシート一覧:`);
-      ss.getSheets().forEach(sheet => {
-        Logger.log(`  - ${sheet.getName()}`);
-      });
-      throw new Error(`シート「${CONFIG.EXCEL_TRANSFER_CONFIG.SHEET_NAME}」が見つかりません`);
-    }
-    Logger.log(`③デバッグ: シート「${targetSheet.getName()}」を取得しました`);
-
-    // 各表への転記を実行
-    // ① 売上高内訳表
-    if (classifiedData['①売上高内訳表'].length > 0) {
-      const logs = transferToTable01_SalesBreakdown(targetSheet, classifiedData['①売上高内訳表']);
-      allTransferLogs.push(...logs);
-      successCount += logs.length;
-    }
-
-    // ③ 変動費内訳比較表
-    if (classifiedData['③変動費内訳比較表'].length > 0) {
-      const logs = transferToTable03_VariableCosts(targetSheet, classifiedData['③変動費内訳比較表']);
-      allTransferLogs.push(...logs);
-      successCount += logs.length;
-    }
-
-    // ④ 製造経費比較表
-    if (classifiedData['④製造経費比較表'].length > 0) {
-      const logs = transferToTable04_ManufacturingExpenses(targetSheet, classifiedData['④製造経費比較表']);
-      allTransferLogs.push(...logs);
-      successCount += logs.length;
-    }
-
-    // ② 販売費及び一般管理費比較表
-    if (classifiedData['②販売費及び一般管理費比較表'].length > 0) {
-      const logs = transferToTable02_SGA(targetSheet, classifiedData['②販売費及び一般管理費比較表']);
-      allTransferLogs.push(...logs);
-      successCount += logs.length;
-    }
-
-    // ⑤ その他損益比較表
-    const otherPLData = classifiedData['⑤その他損益比較表'];
-    const hasOtherPLData = Object.values(otherPLData).some(category => category.length > 0);
-    if (hasOtherPLData) {
-      const logs = transferToTable05_OtherPL(targetSheet, otherPLData);
-      allTransferLogs.push(...logs);
-      successCount += logs.length;
-    }
-
-    // 転記完了ログを記録
-    recordTransferLog(ss, allTransferLogs);
-
-    Logger.log(`====== エクセル転記処理が完了しました ======`);
-    Logger.log(`成功: ${successCount}件、エラー: ${errorCount}件`);
-
-    return {
-      success: true,
-      totalProcessed: ocrData.length,
-      totalTransferred: successCount,
-      errorCount: errorCount,
-      logs: allTransferLogs
-    };
-
-  } catch (e) {
-    Logger.log(`エラー: ${e.message}`);
-    SpreadsheetApp.getUi().alert(`エラーが発生しました: ${e.message}`);
-    return {
-      success: false,
-      error: e.message
-    };
-  }
-}
-
-/**
- * 転記ログをスプレッドシートに記録（バッチ操作で最適化）
- * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss - スプレッドシート
- * @param {Array<Object>} transferLogs - {{tableNumber, itemName, row, status, amounts}, ...}
- */
-function recordTransferLog(ss, transferLogs) {
-  const logSheet = getOrCreateSheet(CONFIG.RECONCILIATION_LOG_SHEET);
-
-  // タイムスタンプを時間まで含める
-  const now = new Date();
-  const timestampStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-
-  const headers = ['タイムスタンプ', '表番号', '項目名', '当期金額', 'ステータス', 'メッセージ'];
-
-  // ヘッダーが存在しない場合は初期化
-  if (logSheet.getLastRow() === 0) {
-    logSheet.getRange(1, 1, 1, headers.length).setValues([headers])
-      .setFontWeight('bold')
-      .setBackground('#4A86E8')
-      .setFontColor('#FFFFFF');
-    logSheet.setFrozenRows(1);
-  }
-
-  if (transferLogs.length === 0) {
-    Logger.log('記録するログがありません');
-    return;
-  }
-
-  // ログエントリを準備
-  const logEntries = transferLogs.map(log => [
-    timestampStr,
-    log.tableNumber || '',
-    log.itemName || '',
-    log.amounts ? log.amounts['当期'] || 0 : 0,
-    log.status || '',
-    log.aggregatedCount ? `${log.aggregatedCount}件を集計` : ''
-  ]);
-
-  // 背景色を一括で準備（バッチ操作用）
-  const backgroundColors = logEntries.map(entry => {
-    let bgColor = '#FFFFFF';  // デフォルト白
-
-    if (entry[4].includes('成功')) {
-      bgColor = '#D9EAD3';  // 緑
-    } else if (entry[4].includes('エラー')) {
-      bgColor = '#F4CCCC';  // 赤
-    }
-
-    // 行全体に同じ色を適用
-    return new Array(headers.length).fill(bgColor);
-  });
-
-  // 一括書き込み（パフォーマンス最適化）
-  const startRow = logSheet.getLastRow() + 1;
-  const range = logSheet.getRange(startRow, 1, logEntries.length, headers.length);
-
-  range.setValues(logEntries);          // 1回のAPI呼び出しで全データ書き込み
-  range.setBackgrounds(backgroundColors); // 1回のAPI呼び出しで全背景色設定
-
-  Logger.log(`${logEntries.length}件のログを記録しました（バッチ操作）`);
-}
-
-/**
- * テスト：基本的なログ出力確認
- */
-function testBasicLogging() {
-  Logger.log(`テスト開始`);
-  Logger.log(`テスト: startStep3テスト開始`);
-
-  try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    Logger.log(`テスト: スプレッドシート取得成功`);
-    Logger.log(`スプレッドシート名: ${ss.getName()}`);
-
-    // シート一覧を取得
-    const sheets = ss.getSheets();
-    Logger.log(`シート数: ${sheets.length}`);
-    sheets.forEach((sheet, idx) => {
-      Logger.log(`  [${idx}] ${sheet.getName()}`);
-    });
-
-    const ocrSheet = ss.getSheetByName(CONFIG.OCR_SHEET_NAME);
-    Logger.log(`テスト: OCRシート取得試行 - ${CONFIG.OCR_SHEET_NAME}`);
-    if (ocrSheet) {
-      Logger.log(`テスト: OCRシート取得成功 - 最終行: ${ocrSheet.getLastRow()}`);
-    } else {
-      Logger.log(`テスト: OCRシート取得失敗`);
-    }
-
-    Logger.log(`テスト: テスト終了`);
-  } catch (e) {
-    Logger.log(`テストエラー: ${e.message}`);
-  }
-}
-
 function startStep3_transferDataToExcel() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ocrSheet = ss.getSheetByName(CONFIG.OCR_SHEET_NAME);
@@ -2236,4 +2032,37 @@ function showTransferLog() {
 
   SpreadsheetApp.setActiveSheet(logSheet);
   SpreadsheetApp.getUi().alert(`「${CONFIG.RECONCILIATION_LOG_SHEET}」シートを表示しました。`);
+}
+
+/**
+ * デバッグ：基本的なログ出力確認
+ */
+function testBasicLogging() {
+  Logger.log(`テスト開始`);
+  Logger.log(`テスト: startStep3テスト開始`);
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    Logger.log(`テスト: スプレッドシート取得成功`);
+    Logger.log(`スプレッドシート名: ${ss.getName()}`);
+
+    // シート一覧を取得
+    const sheets = ss.getSheets();
+    Logger.log(`シート数: ${sheets.length}`);
+    sheets.forEach((sheet, idx) => {
+      Logger.log(`  [${idx}] ${sheet.getName()}`);
+    });
+
+    const ocrSheet = ss.getSheetByName(CONFIG.OCR_SHEET_NAME);
+    Logger.log(`テスト: OCRシート取得試行 - ${CONFIG.OCR_SHEET_NAME}`);
+    if (ocrSheet) {
+      Logger.log(`テスト: OCRシート取得成功 - 最終行: ${ocrSheet.getLastRow()}`);
+    } else {
+      Logger.log(`テスト: OCRシート取得失敗`);
+    }
+
+    Logger.log(`テスト: テスト終了`);
+  } catch (e) {
+    Logger.log(`テストエラー: ${e.message}`);
+  }
 }
