@@ -1,0 +1,12 @@
+# バックアップファイルを除外
+**/*_backup.*
+**/*_temp.*
+**/*_new.*
+
+# その他の除外ファイル
+*.md
+*.json
+!appsscript.json
+!.clasp.json
+.git/
+node_modules/

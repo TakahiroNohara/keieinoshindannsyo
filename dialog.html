@@ -6,29 +6,47 @@
       body { font-family: sans-serif; padding: 10px; color: #333; }
       h3 { margin-top: 0; }
       select, button { width: 100%; padding: 8px; margin-top: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; }
-      label { margin-top: 15px; display: block; font-size: 0.9em; }
+      label { margin-top: 15px; display: block; font-size: 0.9em; font-weight: bold; }
       button { background-color: #4285F4; color: white; border: none; cursor: pointer; font-weight: bold; }
       button:hover { background-color: #357AE8; }
       button:disabled { background-color: #a0a0a0; cursor: not-allowed; }
       #loader { display: none; margin-top: 10px; text-align: center; color: #555; }
+      .period-section { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; }
+      .period-title { color: #1a73e8; margin-bottom: 5px; }
     </style>
   </head>
   <body>
-    <h3>決算書ファイルを選択</h3>
-    
+    <h3>3期分の決算書ファイルを選択</h3>
+
     <label for="folder-select">1. フォルダを選択してください:</label>
     <select id="folder-select" onchange="loadFiles()">
       <option value="">読み込み中...</option>
     </select>
-    
+
     <div id="loader">ファイルを検索中...</div>
 
-    <label for="file-select">2. PDFファイルを選択してください:</label>
-    <select id="file-select" disabled>
-      <option value="">フォルダを先に選択</option>
-    </select>
-    
-    <button onclick="selectFile()" id="select-button" disabled>このファイルで抽出を開始</button>
+    <div class="period-section">
+      <div class="period-title">2-1. 当期の決算書PDFを選択:</div>
+      <select id="file-current" disabled>
+        <option value="">フォルダを先に選択</option>
+      </select>
+    </div>
+
+    <div class="period-section">
+      <div class="period-title">2-2. 前期の決算書PDFを選択:</div>
+      <select id="file-previous" disabled>
+        <option value="">フォルダを先に選択</option>
+      </select>
+    </div>
+
+    <div class="period-section">
+      <div class="period-title">2-3. 前々期の決算書PDFを選択:</div>
+      <select id="file-2periods-ago" disabled>
+        <option value="">フォルダを先に選択</option>
+      </select>
+    </div>
+
+    <button onclick="selectFiles()" id="select-button" disabled>3期分のファイルでOCR抽出を開始</button>
 
     <script>
       window.onload = function() {
@@ -43,60 +61,99 @@
           select.appendChild(option);
         });
       }
-      
+
       function loadFiles() {
         const folderSelect = document.getElementById('folder-select');
-        const fileSelect = document.getElementById('file-select');
+        const fileCurrent = document.getElementById('file-current');
+        const filePrevious = document.getElementById('file-previous');
+        const file2PeriodsAgo = document.getElementById('file-2periods-ago');
         const loader = document.getElementById('loader');
         const selectButton = document.getElementById('select-button');
-        
+
         const folderId = folderSelect.value;
         if (!folderId) {
-          fileSelect.innerHTML = '<option value="">フォルダを先に選択</option>';
-          fileSelect.disabled = true;
+          fileCurrent.innerHTML = '<option value="">フォルダを先に選択</option>';
+          filePrevious.innerHTML = '<option value="">フォルダを先に選択</option>';
+          file2PeriodsAgo.innerHTML = '<option value="">フォルダを先に選択</option>';
+          fileCurrent.disabled = true;
+          filePrevious.disabled = true;
+          file2PeriodsAgo.disabled = true;
           selectButton.disabled = true;
           return;
         }
 
-        fileSelect.innerHTML = '<option value="">検索中...</option>';
-        fileSelect.disabled = true;
+        fileCurrent.innerHTML = '<option value="">検索中...</option>';
+        filePrevious.innerHTML = '<option value="">検索中...</option>';
+        file2PeriodsAgo.innerHTML = '<option value="">検索中...</option>';
+        fileCurrent.disabled = true;
+        filePrevious.disabled = true;
+        file2PeriodsAgo.disabled = true;
         selectButton.disabled = true;
         loader.style.display = 'block';
-        
+
         google.script.run.withSuccessHandler(function(files){
           populateFiles(files);
           loader.style.display = 'none';
-          fileSelect.disabled = false;
+          fileCurrent.disabled = false;
+          filePrevious.disabled = false;
+          file2PeriodsAgo.disabled = false;
         }).getPDFFilesInFolder(folderId);
       }
-      
+
       function populateFiles(files) {
-        const select = document.getElementById('file-select');
-        select.innerHTML = '<option value="">選択してください</option>';
+        const selectCurrent = document.getElementById('file-current');
+        const selectPrevious = document.getElementById('file-previous');
+        const select2PeriodsAgo = document.getElementById('file-2periods-ago');
+
+        const defaultOption = '<option value="">選択してください</option>';
+
         if (files.length > 0) {
+          selectCurrent.innerHTML = defaultOption;
+          selectPrevious.innerHTML = defaultOption;
+          select2PeriodsAgo.innerHTML = defaultOption;
+
           files.forEach(function(file) {
-            let option = new Option(file.name, file.id);
-            select.appendChild(option);
+            selectCurrent.appendChild(new Option(file.name, file.id));
+            selectPrevious.appendChild(new Option(file.name, file.id));
+            select2PeriodsAgo.appendChild(new Option(file.name, file.id));
           });
         } else {
-          select.innerHTML = '<option value="">PDFファイルが見つかりません</option>';
+          const noFilesOption = '<option value="">PDFファイルが見つかりません</option>';
+          selectCurrent.innerHTML = noFilesOption;
+          selectPrevious.innerHTML = noFilesOption;
+          select2PeriodsAgo.innerHTML = noFilesOption;
         }
       }
-      
-      document.getElementById('file-select').addEventListener('change', function() {
-        document.getElementById('select-button').disabled = !this.value;
-      });
 
-      function selectFile() {
-        const fileId = document.getElementById('file-select').value;
-        if (fileId) {
+      // 3つのファイルが選択されたらボタンを有効化
+      function checkAllSelected() {
+        const fileCurrent = document.getElementById('file-current').value;
+        const filePrevious = document.getElementById('file-previous').value;
+        const file2PeriodsAgo = document.getElementById('file-2periods-ago').value;
+        const selectButton = document.getElementById('select-button');
+
+        // 3つすべて選択されていればボタンを有効化
+        selectButton.disabled = !(fileCurrent && filePrevious && file2PeriodsAgo);
+      }
+
+      document.getElementById('file-current').addEventListener('change', checkAllSelected);
+      document.getElementById('file-previous').addEventListener('change', checkAllSelected);
+      document.getElementById('file-2periods-ago').addEventListener('change', checkAllSelected);
+
+      function selectFiles() {
+        const fileCurrentId = document.getElementById('file-current').value;
+        const filePreviousId = document.getElementById('file-previous').value;
+        const file2PeriodsAgoId = document.getElementById('file-2periods-ago').value;
+
+        if (fileCurrentId && filePreviousId && file2PeriodsAgoId) {
           document.getElementById('select-button').disabled = true;
-          document.getElementById('select-button').innerText = '処理を開始しています...';
+          document.getElementById('select-button').innerText = '3期分のOCR処理を実行中...';
+
           google.script.run
             .withSuccessHandler(function() {
               google.script.host.close();
             })
-            .setFileIdAndExtract(fileId);
+            .setMultipleFilesAndExtract(fileCurrentId, filePreviousId, file2PeriodsAgoId);
         }
       }
     </script>

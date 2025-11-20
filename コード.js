@@ -6,9 +6,7 @@
 
 /** @typedef {{item: string, value: string}} MappingEntry */
 /** @typedef {{name: string, id: string}} FileInfo */
-/** @typedef {{name: string, id: string}} FolderInfo */
-
-const VERSION = '3.3.0'; // スクリプトバージョン管理（v3.3.0: PL/BSマッピング統合）
+const VERSION = '3.6.2'; // スクリプトバージョン管理（v3.6.2: 正規化関数の修正、テーブル名とグループ名の正規化を軽減）
 
 // API KEYのグローバルキャッシュ（パフォーマンス最適化）
 let CACHED_API_KEY = null;
@@ -100,11 +98,11 @@ const CONFIG = Object.freeze({
         columnLayout: 'standard',  // A-K列を使用
         headerRow: 13,
         dataStartRow: 14,
-        dataEndRow: 19,
+        dataEndRow: 21,
         subtotalRow: 17,
         totalRow: 20,
         itemColumn: 'A',
-        dataRowCount: 6,
+        dataRowCount: 8,
         type: 'classified',  // グループ分類型に変更
         groups: Object.freeze({
           '変動費': {
@@ -114,16 +112,16 @@ const CONFIG = Object.freeze({
             label: '変動費'
           },
           '期首棚卸高': {
-            dataStartRow: 16,
-            dataEndRow: 16,
+            dataStartRow: 18,
+            dataEndRow: 18,
             maxDataRows: 1,
             label: '期首棚卸高'
           },
           '期末棚卸高': {
-            dataStartRow: 17,
-            dataEndRow: 19,
+            dataStartRow: 19,
+            dataEndRow: 21,
             maxDataRows: 3,
-            otherRow: 19,
+            otherRow: 21,
             label: '期末棚卸高'
           }
         }),
@@ -347,8 +345,7 @@ function onOpen() {
     .addSeparator()
     .addItem('【ステップ２】統合マッピングシート準備', 'startStep2_createUnifiedMappingSheet')
     .addSeparator()
-    .addItem('【ステップ３】マッピングを適用して転記 (旧)', 'startStep3_transferData')
-    .addItem('【ステップ３NEW】自動分類して各表に転記（推奨）', 'startStep3_transferDataToExcel')
+    .addItem('【ステップ３】PL/BSへデータを転記', 'startStep3_transferDataToExcel')
     .addSeparator()
     .addItem('【管理】転記ログを表示', 'showTransferLog')
     .addItem('【デバッグ】テスト実行', 'debugTest')
@@ -412,15 +409,323 @@ function setFileIdAndExtract(fileId) {
     if (results.length > 0) {
       const ocrSheet = getOrCreateSheet(CONFIG.OCR_SHEET_NAME);
       ocrSheet.clear();
-      ocrSheet.getRange(1, 1, results.length, 2).setValues(results).setHorizontalAlignment('left').setNumberFormat('@');
-      ocrSheet.setColumnWidths(1, 2, 250);
-      SpreadsheetApp.getUi().alert('OCR抽出が完了し、「' + CONFIG.OCR_SHEET_NAME + '」に出力しました。\n\n次に「ステップ２」を実行してください。');
+      
+      // ヘッダー行を追加（3期分対応）
+      const headers = [['勘定科目', '前々期', '前期', '当期']];
+      ocrSheet.getRange(1, 1, 1, 4).setValues(headers)
+        .setFontWeight('bold')
+        .setBackground('#E8EAED')
+        .setHorizontalAlignment('center');
+      
+      // OCRデータを書き込み（4列：項目名、前々期、前期、当期）
+      ocrSheet.getRange(2, 1, results.length, 4).setValues(results)
+        .setHorizontalAlignment('left')
+        .setNumberFormat('@STRING@');  // 項目名は文字列、金額は数値として表示
+      
+      // 列幅を調整
+      ocrSheet.setColumnWidth(1, 300);  // 勘定科目列を広く
+      ocrSheet.setColumnWidths(2, 3, 120);  // 金額列は標準幅
+      ocrSheet.setFrozenRows(1);  // ヘッダー行を固定
+      
+      SpreadsheetApp.getUi().alert(`OCR抽出が完了し、「${CONFIG.OCR_SHEET_NAME}」に出力しました。\n\n抽出項目数: ${results.length}件\n3期分（前々期、前期、当期）のデータを取得しました。\n\n次に「ステップ２」を実行してください。`);
     } else {
       SpreadsheetApp.getUi().alert('有効なデータを抽出できませんでした。');
     }
   } catch (e) {
+    Logger.log(`エラー詳細: ${e.message}\nスタック: ${e.stack}`);
     SpreadsheetApp.getUi().alert('エラーが発生しました: ' + e.message);
   }
+}
+
+/**
+ * 3つの決算書PDFから3期分のデータを抽出する
+ * @param {string} fileCurrentId - 当期の決算書PDFファイルID
+ * @param {string} filePreviousId - 前期の決算書PDFファイルID
+ * @param {string} file2PeriodsAgoId - 前々期の決算書PDFファイルID
+ */
+function setMultipleFilesAndExtract(fileCurrentId, filePreviousId, file2PeriodsAgoId) {
+  try {
+    SpreadsheetApp.getUi().alert('3期分のOCR抽出を開始します。処理には数分かかる場合があります。完了したら再度通知します。');
+
+    // 3つのファイルを取得
+    const fileCurrent = DriveApp.getFileById(fileCurrentId);
+    const filePrevious = DriveApp.getFileById(filePreviousId);
+    const file2PeriodsAgo = DriveApp.getFileById(file2PeriodsAgoId);
+
+    if (!fileCurrent || !filePrevious || !file2PeriodsAgo) {
+      SpreadsheetApp.getUi().alert('いずれかのファイルが見つかりませんでした。');
+      return;
+    }
+
+    // 3つのPDFから個別にOCR抽出
+    Logger.log('当期の決算書をOCR抽出中...');
+    const resultCurrent = callGeminiApiSinglePeriod(fileCurrent, '当期');
+    const dataCurrent = parseSinglePeriodCsvResult(resultCurrent);
+    Logger.log(`当期: ${dataCurrent.length}件抽出完了`);
+
+    Logger.log('前期の決算書をOCR抽出中...');
+    const resultPrevious = callGeminiApiSinglePeriod(filePrevious, '前期');
+    const dataPrevious = parseSinglePeriodCsvResult(resultPrevious);
+    Logger.log(`前期: ${dataPrevious.length}件抽出完了`);
+
+    Logger.log('前々期の決算書をOCR抽出中...');
+    const result2PeriodsAgo = callGeminiApiSinglePeriod(file2PeriodsAgo, '前々期');
+    const data2PeriodsAgo = parseSinglePeriodCsvResult(result2PeriodsAgo);
+    Logger.log(`前々期: ${data2PeriodsAgo.length}件抽出完了`);
+
+    // 3期分のデータを統合（勘定科目をキーにマージ）
+    const mergedData = merge3PeriodData(data2PeriodsAgo, dataPrevious, dataCurrent);
+
+    if (mergedData.length > 0) {
+      const ocrSheet = getOrCreateSheet(CONFIG.OCR_SHEET_NAME);
+      ocrSheet.clear();
+
+      // ヘッダー行を追加（3期分対応）
+      const headers = [['勘定科目', '前々期', '前期', '当期']];
+      ocrSheet.getRange(1, 1, 1, 4).setValues(headers)
+        .setFontWeight('bold')
+        .setBackground('#E8EAED')
+        .setHorizontalAlignment('center');
+
+      // OCRデータを書き込み（4列：項目名、前々期、前期、当期）
+      ocrSheet.getRange(2, 1, mergedData.length, 4).setValues(mergedData)
+        .setHorizontalAlignment('left')
+        .setNumberFormat('@STRING@');  // 項目名は文字列、金額は数値として表示
+
+      // 列幅を調整
+      ocrSheet.setColumnWidth(1, 300);  // 勘定科目列を広く
+      ocrSheet.setColumnWidths(2, 3, 120);  // 金額列は標準幅
+      ocrSheet.setFrozenRows(1);  // ヘッダー行を固定
+
+      SpreadsheetApp.getUi().alert(`3期分のOCR抽出が完了し、「${CONFIG.OCR_SHEET_NAME}」に出力しました。\n\n統合項目数: ${mergedData.length}件\n前々期: ${data2PeriodsAgo.length}件\n前期: ${dataPrevious.length}件\n当期: ${dataCurrent.length}件\n\n次に「ステップ２」を実行してください。`);
+    } else {
+      SpreadsheetApp.getUi().alert('有効なデータを抽出できませんでした。');
+    }
+  } catch (e) {
+    Logger.log(`エラー詳細: ${e.message}\nスタック: ${e.stack}`);
+    SpreadsheetApp.getUi().alert('エラーが発生しました: ' + e.message);
+  }
+}
+
+/**
+ * Gemini APIを呼び出して単一期のPDFから勘定科目と金額を抽出
+ * @param {GoogleAppsScript.Drive.File} file - 抽出対象のPDFファイル
+ * @param {string} periodLabel - 期の名称（デバッグ用）
+ * @return {string} 抽出されたテキスト
+ */
+function callGeminiApiSinglePeriod(file, periodLabel) {
+  return callWithRetry(() => {
+    const API_KEY = getApiKey();
+    const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + API_KEY;
+    const prompt = `このファイルには、「貸借対照表」「損益計算書」「製造原価報告書」「販売費及び一般管理費内訳書」が含まれています。これらの書類から、記載されているすべての勘定科目と金額を抽出してください。
+
+【重要】
+- 各勘定科目について、記載されている金額を抽出してください
+- 金額が記載されていない項目は「0」と出力してください
+- 出力形式：「勘定科目,金額」のCSV形式
+- 金額に通貨記号(¥)や桁区切りのカンマ(,)は含めず、半角数字のみで出力してください
+
+【抽出順序】
+1. 「貸借対照表」のすべての項目を上から順に
+2. 「損益計算書」のすべての項目を上から順に
+3. 「製造原価報告書」のすべての項目を上から順に（存在する場合）
+4. 「販売費及び一般管理費内訳書」のすべての項目を上から順に（存在する場合）
+
+【対象項目】
+- 小計、合計、内訳項目も含め、勘定科目と金額が記載されている行は例外なくすべてを抽出対象とします
+- タイトル、日付、会社名など、勘定科目ではないテキスト行は無視してください
+
+【出力例】
+流動資産,50000000
+現金及び預金,20000000
+売上高,123456789
+材料費,5000000`;
+
+    const requestBody = {
+      "contents": [{"parts": [{ "text": prompt }, { "inline_data": { "mime_type": file.getMimeType(), "data": Utilities.base64Encode(file.getBlob().getBytes()) } }] }],
+      "generationConfig": { "temperature": 0.0, "topP": 1, "maxOutputTokens": 32768 }
+    };
+    const options = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(requestBody), 'muteHttpExceptions': true };
+    const response = UrlFetchApp.fetch(API_ENDPOINT, options);
+    const responseCode = response.getResponseCode();
+    const responseBody = response.getContentText();
+
+    if (responseCode === 200) {
+      const json = JSON.parse(responseBody);
+      if (json.candidates && json.candidates[0].content && json.candidates[0].content.parts && json.candidates[0].content.parts[0].text) {
+        return json.candidates[0].content.parts[0].text;
+      } else {
+        return "";
+      }
+    } else {
+      throw new Error(`APIリクエストに失敗しました (${periodLabel})。ステータスコード: ${responseCode}\nレスポンス: ${responseBody}`);
+    }
+  }, CONFIG.API.MAX_RETRIES, CONFIG.API.RETRY_DELAY_MS);
+}
+
+/**
+ * 単一期のCSV形式のOCR結果をパースする
+ * @param {string} text - CSV形式のテキスト（勘定科目,金額）
+ * @return {Array<Array<string>>} [[勘定科目, 金額], ...] の配列
+ */
+function parseSinglePeriodCsvResult(text) {
+  const cleanedText = text.replace(/```csv\n?/g, '').replace(/```/g, '').trim();
+  if (!cleanedText) return [];
+
+  const lines = cleanedText.split('\n');
+  const results = [];
+  const seenItems = new Set();
+
+  for (const line of lines) {
+    const parts = line.split(',');
+
+    if (parts.length >= 2) {
+      let item = parts[0].trim();
+      item = normalizeJapaneseText(item);
+
+      if (!isSafeText(item)) {
+        Logger.log(`警告: 安全でない項目名を検出してスキップしました: ${item}`);
+        continue;
+      }
+
+      const amount = parseJapaneseNumber(parts[1].trim());
+
+      if (seenItems.has(item)) {
+        Logger.log(`警告: 重複項目を検出しました: ${item} (既存の値を保持します)`);
+        continue;
+      }
+
+      seenItems.add(item);
+      results.push([item, amount]);
+    }
+  }
+
+  return results;
+}
+
+/**
+ * 3期分のデータを統合する
+ * @param {Array<Array>} data2PeriodsAgo - 前々期データ [[勘定科目, 金額], ...]
+ * @param {Array<Array>} dataPrevious - 前期データ [[勘定科目, 金額], ...]
+ * @param {Array<Array>} dataCurrent - 当期データ [[勘定科目, 金額], ...]
+ * @return {Array<Array>} 統合データ [[勘定科目, 前々期, 前期, 当期], ...]
+ */
+function merge3PeriodData(data2PeriodsAgo, dataPrevious, dataCurrent) {
+  Logger.log('========== 3期分データ統合開始（当期基準・類似度マッチング対応） ==========');
+
+  // 勘定科目をキーにマップを作成（正規化後の項目名をキーとする）
+  const itemMap = new Map();
+  const normalizedToOriginalMap = new Map(); // 正規化後 → 元の項目名（当期優先）
+
+  // ステップ1: 当期のデータを基準として登録
+  Logger.log(`\n[ステップ1] 当期データを基準として登録（${dataCurrent.length}件）`);
+  dataCurrent.forEach(([item, amount]) => {
+    const normalizedItem = normalizeJapaneseText(item);
+    itemMap.set(normalizedItem, {
+      current: amount,
+      previous: 0,
+      twoPeriodsAgo: 0,
+      originalName: item  // 当期の項目名を保存
+    });
+    normalizedToOriginalMap.set(normalizedItem, item);
+    Logger.log(`  当期: "${item}" (正規化: "${normalizedItem}") = ${amount}`);
+  });
+
+  // ステップ2: 前期のデータをマッチング
+  Logger.log(`\n[ステップ2] 前期データをマッチング（${dataPrevious.length}件）`);
+  const currentItemNames = Array.from(normalizedToOriginalMap.values());
+
+  dataPrevious.forEach(([item, amount]) => {
+    const normalizedItem = normalizeJapaneseText(item);
+
+    // 2-1: 正規化後の完全一致を試みる
+    if (itemMap.has(normalizedItem)) {
+      itemMap.get(normalizedItem).previous = amount;
+      Logger.log(`  前期: "${item}" → 完全一致 "${itemMap.get(normalizedItem).originalName}" = ${amount}`);
+    } else {
+      // 2-2: 類似度マッチングを試みる
+      const bestMatch = findBestMatch(item, currentItemNames, 0.7);
+      if (bestMatch) {
+        const normalizedMatch = normalizeJapaneseText(bestMatch);
+        itemMap.get(normalizedMatch).previous = amount;
+        Logger.log(`  前期: "${item}" → 類似マッチ "${bestMatch}" (類似度70%以上) = ${amount}`);
+      } else {
+        // 2-3: マッチングしない場合は新規項目として追加（当期=0）
+        itemMap.set(normalizedItem, {
+          current: 0,
+          previous: amount,
+          twoPeriodsAgo: 0,
+          originalName: item
+        });
+        Logger.log(`  前期: "${item}" → 新規項目（当期に該当なし）= ${amount}`);
+      }
+    }
+  });
+
+  // ステップ3: 前々期のデータをマッチング
+  Logger.log(`\n[ステップ3] 前々期データをマッチング（${data2PeriodsAgo.length}件）`);
+
+  data2PeriodsAgo.forEach(([item, amount]) => {
+    const normalizedItem = normalizeJapaneseText(item);
+
+    // 3-1: 正規化後の完全一致を試みる
+    if (itemMap.has(normalizedItem)) {
+      itemMap.get(normalizedItem).twoPeriodsAgo = amount;
+      Logger.log(`  前々期: "${item}" → 完全一致 "${itemMap.get(normalizedItem).originalName}" = ${amount}`);
+    } else {
+      // 3-2: 類似度マッチングを試みる
+      const bestMatch = findBestMatch(item, currentItemNames, 0.7);
+      if (bestMatch) {
+        const normalizedMatch = normalizeJapaneseText(bestMatch);
+        itemMap.get(normalizedMatch).twoPeriodsAgo = amount;
+        Logger.log(`  前々期: "${item}" → 類似マッチ "${bestMatch}" (類似度70%以上) = ${amount}`);
+      } else {
+        // 3-3: マッチングしない場合は新規項目として追加（当期=0、前期は既存値を保持）
+        if (itemMap.has(normalizedItem)) {
+          // すでに前期で追加されている場合
+          itemMap.get(normalizedItem).twoPeriodsAgo = amount;
+          Logger.log(`  前々期: "${item}" → 既存項目に追加 = ${amount}`);
+        } else {
+          // 前々期のみに存在する項目
+          itemMap.set(normalizedItem, {
+            current: 0,
+            previous: 0,
+            twoPeriodsAgo: amount,
+            originalName: item
+          });
+          Logger.log(`  前々期: "${item}" → 新規項目（当期・前期に該当なし）= ${amount}`);
+        }
+      }
+    }
+  });
+
+  // ステップ4: マップを配列に変換 [勘定科目, 前々期, 前期, 当期]
+  // 項目名は当期の名称を優先、当期に存在しない場合は前期→前々期の順で使用
+  const mergedData = [];
+  itemMap.forEach((amounts, normalizedItem) => {
+    mergedData.push([
+      amounts.originalName,  // 元の項目名（当期優先）
+      amounts.twoPeriodsAgo,
+      amounts.previous,
+      amounts.current
+    ]);
+  });
+
+  Logger.log(`\n========== 統合結果: ${mergedData.length}件の勘定科目を統合しました ==========`);
+
+  // 統合結果のサマリー
+  const currentOnlyCount = mergedData.filter(([_, a, b, c]) => c !== 0 && a === 0 && b === 0).length;
+  const previousOnlyCount = mergedData.filter(([_, a, b, c]) => b !== 0 && c === 0 && a === 0).length;
+  const twoPeriodsAgoOnlyCount = mergedData.filter(([_, a, b, c]) => a !== 0 && b === 0 && c === 0).length;
+  const allPeriodsCount = mergedData.filter(([_, a, b, c]) => a !== 0 && b !== 0 && c !== 0).length;
+
+  Logger.log(`  - 3期すべてに存在: ${allPeriodsCount}件`);
+  Logger.log(`  - 当期のみ: ${currentOnlyCount}件`);
+  Logger.log(`  - 前期のみ: ${previousOnlyCount}件`);
+  Logger.log(`  - 前々期のみ: ${twoPeriodsAgoOnlyCount}件`);
+  Logger.log(`  - その他（2期に存在）: ${mergedData.length - currentOnlyCount - previousOnlyCount - twoPeriodsAgoOnlyCount - allPeriodsCount}件`);
+
+  return mergedData;
 }
 
 /**
@@ -435,7 +740,7 @@ function startStep2_createUnifiedMappingSheet() {
     SpreadsheetApp.getUi().alert('先に「ステップ１」を実行して、「' + CONFIG.OCR_SHEET_NAME + '」にデータを抽出してください。');
     return;
   }
-  const sourceItems = ocrSheet.getRange(1, 1, ocrSheet.getLastRow(), 1).getValues().flat().filter(String);
+  const sourceItems = ocrSheet.getRange(2, 1, ocrSheet.getLastRow() - 1, 1).getValues().flat().filter(String);  // ヘッダー行をスキップして項目名のみ取得
 
   // 転記先シートの確認
   const targetSheetPL = ss.getSheetByName(CONFIG.EXCEL_TRANSFER_CONFIG.SHEET_NAME);
@@ -452,9 +757,9 @@ function startStep2_createUnifiedMappingSheet() {
 
   // ヘッダー行を設定
   const headerValues = [
-    ['OCR抽出項目', '転記先分類（推奨）', '詳細グループ（推奨）', '説明']
+    ['OCR抽出項目', '転記先分類（推奨）', '詳細グループ（推奨）', '転記先行（任意）', '転記先列（任意）', '説明']
   ];
-  mappingSheet.getRange('A1:D1').setValues(headerValues)
+  mappingSheet.getRange('A1:F1').setValues(headerValues)
     .setFontWeight('bold')
     .setBackground('#4A86E8')
     .setFontColor('#FFFFFF');
@@ -464,7 +769,7 @@ function startStep2_createUnifiedMappingSheet() {
   const descriptions = [];
 
   sourceItems.forEach(item => {
-    const normalized = normalizeJapaneseText(item);
+    const normalized = normalizeJapaneseText(item, true);  // 勘定科目名: 強い正規化
     const classification = classifyItemToTable(normalized);
 
     let suggestedTable = '';
@@ -477,14 +782,15 @@ function startStep2_createUnifiedMappingSheet() {
       description = '自動推奨（必要に応じて変更）';
     }
 
-    dataRows.push([item, suggestedTable, suggestedGroup]);
+    // D列・E列は空白（手動指定する場合のみ入力）
+    dataRows.push([item, suggestedTable, suggestedGroup, '', '']);
     descriptions.push([description]);
   });
 
   // データ行に値を一括設定
   if (dataRows.length > 0) {
-    mappingSheet.getRange(2, 1, dataRows.length, 3).setValues(dataRows);
-    mappingSheet.getRange(2, 4, descriptions.length, 1).setValues(descriptions).setFontColor('#999999');
+    mappingSheet.getRange(2, 1, dataRows.length, 5).setValues(dataRows);
+    mappingSheet.getRange(2, 6, descriptions.length, 1).setValues(descriptions).setFontColor('#999999');
   }
 
   // B列：転記先分類のドロップダウン（PLとBSを統合）
@@ -492,7 +798,9 @@ function startStep2_createUnifiedMappingSheet() {
     // PL
     '①売上高内訳表', '②販売費及び一般管理費比較表', '③変動費内訳比較表', '④製造経費比較表', '⑤その他損益比較表',
     // BS
-    'BS:流動資産', 'BS:固定資産', 'BS:流動負債', 'BS:固定負債', 'BS:純資産'
+    'BS:流動資産', 'BS:固定資産', 'BS:流動負債', 'BS:固定負債', 'BS:純資産',
+    // 製造原価
+    '製造原価報告書'
   ];
   const tableRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(tableOptions, true)
@@ -504,24 +812,28 @@ function startStep2_createUnifiedMappingSheet() {
   const groupRule = SpreadsheetApp.newDataValidation()
     .requireValueInList([
       // PL
-      '人件費', 'その他', 'その他経費', '変動費', '期首棚卸高', '期末棚卸高', '労務費',
+      '人件費', 'その他', 'その他経費', '変動費', '期首棚卸高', '期末棚卸高',
       '営業外収益', '営業外費用', '特別利益', '特別損失',
-      // BS（参考用、手入力も可）
+      // 製造原価
+      '材料費', '労務費', '経費', '期首仕掛品', '期末仕掛品',
+      // BS
       '現金・預金', '売上債権', '棚卸資産', 'その他流動資産',
       '有形固定資産', '無形固定資産', '投資その他',
-      '仕入債務', '短期借入金', 'その他流動負債',
-      '長期借入金', 'その他固定負債',
-      '資本金', '資本剰余金', '利益剰余金'
+      '仕入債務', '短期借入金', '未払金', 'その他流動負債',
+      '長期借入金', '社債', '退職給付引当金',
+      '資本金', '資本剰余金', '利益剰余金', '自己株式'
     ], true)
     .setAllowInvalid(true)
     .build();
   mappingSheet.getRange(2, 3, sourceItems.length, 1).setDataValidation(groupRule);
 
   // 列幅を調整
-  mappingSheet.setColumnWidths(1, 1, 250);
-  mappingSheet.setColumnWidths(2, 1, 220);
-  mappingSheet.setColumnWidths(3, 1, 180);
-  mappingSheet.setColumnWidths(4, 1, 250);
+  mappingSheet.setColumnWidths(1, 1, 250);  // A列: OCR抽出項目
+  mappingSheet.setColumnWidths(2, 1, 220);  // B列: 転記先分類
+  mappingSheet.setColumnWidths(3, 1, 180);  // C列: 詳細グループ
+  mappingSheet.setColumnWidths(4, 1, 100);  // D列: 転記先行
+  mappingSheet.setColumnWidths(5, 1, 100);  // E列: 転記先列
+  mappingSheet.setColumnWidths(6, 1, 250);  // F列: 説明
 
   SpreadsheetApp.setActiveSheet(mappingSheet);
 
@@ -529,142 +841,92 @@ function startStep2_createUnifiedMappingSheet() {
   const helpMessage = `「${CONFIG.MAPPING_SHEET_NAME}」を準備しました。
 
 【✨ 自動分類機能】
-B列「転記先分類」とC列「詳細グループ」に推奨値を自動設定しました！
+B列とC列に推奨値を自動設定しました。BS項目も詳細グループが推奨されます。
 正しい場合はそのまま、違う場合のみ変更してください。
 
 【記入方法】
 1. B列「転記先分類」：ドロップダウンから転記先を選択
    • PL項目 → ①〜⑤の表
    • BS項目 → 「BS:流動資産」などのBSカテゴリ
+   • 製造原価項目 → 「製造原価報告書」を選択後、転記したいPLの表（例:③変動費）に手動で変更してください。
 
 2. C列「詳細グループ」：B列の分類に応じて選択
-   • PLの販管費 → 「人件費」/「その他」
-   • PLの変動費 → 「変動費」/「期首棚卸高」/「期末棚卸高」
-   • PLの製造経費 → 「労務費」/「その他経費」
-   • PLのその他損益 → 「営業外収益」/「営業外費用」など
-   • BS項目 → C列は空欄でOK（B列の分類で転記されます）
+   • PL/BSの各項目に対応する詳細グループを選択。
+
+3. D列「転記先行」（任意・上級者向け）：転記先の行番号を手動指定
+   • 通常は空欄のままにしてください（自動配置）
+   • 特定の項目を固定の行に転記したい場合のみ、行番号を入力（例: 18）
+
+4. E列「転記先列」（任意・上級者向け）：転記先の列名を手動指定
+   • 通常は空欄のままにしてください（自動配置）
+   • 特定の項目を別の列に転記したい場合のみ、列名を入力（例: A, M）
 
 【処理フロー】
-- PL項目は指定された表のルールに従って転記されます。
-- BS項目は指定された大区分（流動資産など）に集計・転記されます。
+- PL/BS項目は指定された分類に従い、各表に転記されます。
+- 「製造原価報告書」に分類された項目は、そのままでは転記されません。B列で最終的な転記先の表（例: ③変動費内訳比較表）を選択してください。
+- D列・E列を指定すると、自動配置をオーバーライドして任意の位置に転記できます。
 
 ✅ 内容を確認後、「ステップ３NEW」を実行してください。`;
 
   SpreadsheetApp.getUi().alert(helpMessage);
 }
 
+
+
 /**
- * =================================================================================
- * 【ステップ３】マッピングを適用して転記
- * =================================================================================
+ * テーブルとグループからデフォルトの転記先行・列を取得
+ * @param {string} tableKey - テーブルキー（例: '①売上高内訳表', 'BS:流動資産'）
+ * @param {string} groupKey - グループキー（例: '人件費', '期首棚卸高'）
+ * @return {Object} {{row: string, column: string}} - デフォルト行番号と列名（例: {row: '18', column: 'A'}）
  */
-function startStep3_transferData() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ocrSheet = ss.getSheetByName(CONFIG.OCR_SHEET_NAME);
-  const mappingSheet = ss.getSheetByName(CONFIG.MAPPING_SHEET_NAME);
-  if (!ocrSheet || !mappingSheet) {
-    SpreadsheetApp.getUi().alert('作業用シートが見つかりません。ステップ１と２を先に実行してください。');
-    return;
-  }
-
-  // OCRデータを読み込み（正規化を適用）
-  const ocrData = ocrSheet.getRange(1, 1, ocrSheet.getLastRow(), 2).getValues().reduce((obj, row) => {
-    if (row[0]) {
-      const normalizedKey = normalizeJapaneseText(row[0]);
-      obj[normalizedKey] = row[1];
-    }
-    return obj;
-  }, {});
-
-  const mappingRules = mappingSheet.getRange(2, 1, mappingSheet.getLastRow() - 1, 2).getValues().filter(row => row[0] && row[1]);
-  const plSheet = ss.getSheetByName(CONFIG.TARGET_SHEETS.PL.NAME);
-  const bsSheet = ss.getSheetByName(CONFIG.TARGET_SHEETS.BS.NAME);
-
-  // 調整ログの準備
-  const logEntries = [['タイムスタンプ', '転記元項目', '転記先項目', '金額', 'ステータス', 'メッセージ']];
-  const timestamp = new Date();
-  const unmappedItems = new Set(Object.keys(ocrData));
-  const usedCoordinates = new Set();
-
-  // データ転記
-  mappingRules.forEach(rule => {
-    const sourceItem = normalizeJapaneseText(rule[0]);
-    const destinationItem = rule[1];
-    const amount = ocrData[sourceItem];
-
-    unmappedItems.delete(sourceItem); // マッピングされた項目を記録
-
-    if (amount === undefined || amount === '') {
-      logEntries.push([timestamp, sourceItem, destinationItem, '', 'スキップ', '金額が見つかりません']);
-      return;
+function getDefaultTransferPosition(tableKey, groupKey) {
+  try {
+    // BSの場合
+    if (tableKey.startsWith('BS:')) {
+      const bsGroupName = tableKey.replace('BS:', ''); // "BS:流動資産" -> "流動資産"
+      const bsConfig = CONFIG.EXCEL_TRANSFER_CONFIG.BS_SHEET.GROUPS[bsGroupName];
+      if (bsConfig) {
+        return {
+          row: String(bsConfig.dataStartRow),
+          column: CONFIG.EXCEL_TRANSFER_CONFIG.BS_SHEET.ITEM_COLUMN
+        };
+      }
     }
 
-    let targetCell;
-    let sheetType;
-    if (CONFIG.TARGET_SHEETS.PL.COORDINATES[destinationItem]) {
-      targetCell = plSheet.getRange(CONFIG.TARGET_SHEETS.PL.COORDINATES[destinationItem]);
-      sheetType = 'PL';
-      usedCoordinates.add(CONFIG.TARGET_SHEETS.PL.COORDINATES[destinationItem]);
-    } else if (CONFIG.TARGET_SHEETS.BS.COORDINATES[destinationItem]) {
-      targetCell = bsSheet.getRange(CONFIG.TARGET_SHEETS.BS.COORDINATES[destinationItem]);
-      sheetType = 'BS';
-      usedCoordinates.add(CONFIG.TARGET_SHEETS.BS.COORDINATES[destinationItem]);
+    // PLの場合
+    const tableConfig = CONFIG.EXCEL_TRANSFER_CONFIG.TABLES[tableKey];
+    if (!tableConfig) {
+      return { row: '', column: '' };
     }
 
-    if (targetCell) {
-      targetCell.setValue(amount);
-      logEntries.push([timestamp, sourceItem, destinationItem, amount, '成功', `${sheetType}シートに転記`]);
-      Logger.log(`転記成功: ${sourceItem} → ${destinationItem} (${amount})`);
+    let defaultRow = '';
+    const defaultColumn = tableConfig.itemColumn;
+
+    // グループがある場合
+    if (groupKey && tableConfig.groups) {
+      const groupConfig = tableConfig.groups[groupKey];
+      if (groupConfig) {
+        defaultRow = String(groupConfig.dataStartRow);
+      } else {
+        // グループが見つからない場合はテーブルの開始行
+        defaultRow = String(tableConfig.dataStartRow);
+      }
+    } else if (tableKey === '⑤その他損益比較表') {
+      // ⑤その他損益は集計行（固定）
+      const categoryConfig = tableConfig.categories[groupKey];
+      if (categoryConfig) {
+        defaultRow = String(categoryConfig.row);
+      }
     } else {
-      logEntries.push([timestamp, sourceItem, destinationItem, amount, 'エラー', '転記先が見つかりません']);
-      Logger.log(`エラー: 転記先が見つかりません: ${destinationItem}`);
+      // グループがない場合はテーブルの開始行
+      defaultRow = String(tableConfig.dataStartRow);
     }
-  });
 
-  // 未マッピング項目のログ
-  if (unmappedItems.size > 0) {
-    Logger.log(`警告: ${unmappedItems.size}件の項目がマッピングされていません:`);
-    unmappedItems.forEach(item => {
-      Logger.log(`  - ${item}`);
-      logEntries.push([timestamp, item, '', ocrData[item], '未マッピング', 'マッピング設定が必要です']);
-    });
+    return { row: defaultRow, column: defaultColumn };
+  } catch (e) {
+    Logger.log(`警告: デフォルト位置取得エラー: ${e.message}`);
+    return { row: '', column: '' };
   }
-
-  // R1C1形式の数式を設定（データ整合性向上のため）
-  if (CONFIG.TARGET_SHEETS.PL.FORMULAS_R1C1) {
-    Object.keys(CONFIG.TARGET_SHEETS.PL.FORMULAS_R1C1).forEach(cellAddress => {
-      plSheet.getRange(cellAddress).setFormulaR1C1(CONFIG.TARGET_SHEETS.PL.FORMULAS_R1C1[cellAddress]);
-    });
-    Logger.log('PLシートに数式を設定しました');
-  }
-  if (CONFIG.TARGET_SHEETS.BS.FORMULAS_R1C1) {
-    Object.keys(CONFIG.TARGET_SHEETS.BS.FORMULAS_R1C1).forEach(cellAddress => {
-      bsSheet.getRange(cellAddress).setFormulaR1C1(CONFIG.TARGET_SHEETS.BS.FORMULAS_R1C1[cellAddress]);
-    });
-    Logger.log('BSシートに数式を設定しました');
-  }
-
-  // BSバランスチェックを設定
-  if (CONFIG.TARGET_SHEETS.BS.BALANCE_CHECK) {
-    Object.keys(CONFIG.TARGET_SHEETS.BS.BALANCE_CHECK).forEach(cellAddress => {
-      bsSheet.getRange(cellAddress).setFormula(CONFIG.TARGET_SHEETS.BS.BALANCE_CHECK[cellAddress]);
-    });
-    Logger.log('BSシートにバランスチェックを設定しました');
-  }
-
-  // 数式セルの保護
-  protectFormulaCells(plSheet, CONFIG.TARGET_SHEETS.PL.FORMULAS_R1C1);
-  protectFormulaCells(bsSheet, CONFIG.TARGET_SHEETS.BS.FORMULAS_R1C1);
-  protectFormulaCells(bsSheet, CONFIG.TARGET_SHEETS.BS.BALANCE_CHECK);
-
-  // 調整ログシートに記録
-  writeReconciliationLog(ss, logEntries);
-
-  // バージョン情報を記録
-  plSheet.getRange('A1').setNote(`スクリプトバージョン: ${CONFIG.VERSION}\n更新日時: ${timestamp}`);
-  bsSheet.getRange('A1').setNote(`スクリプトバージョン: ${CONFIG.VERSION}\n更新日時: ${timestamp}`);
-
-  SpreadsheetApp.getUi().alert(`転記が完了しました。\n\n転記成功: ${logEntries.length - 1 - unmappedItems.size}件\n未マッピング: ${unmappedItems.size}件\n\n詳細は「${CONFIG.RECONCILIATION_LOG_SHEET}」シートをご確認ください。`);
 }
 
 /**
@@ -674,24 +936,128 @@ function startStep3_transferData() {
  */
 
 /**
- * 日本語文字列を正規化（全角/半角、空白、Unicode正規化）
+ * 日本語文字列を正規化（全角/半角、空白、Unicode正規化、勘定科目の表記揺れ対応）
  * @param {string} text - 正規化する文字列
+ * @param {boolean} isAccountItem - true: 勘定科目名（強い正規化）、false: テーブル名等（軽い正規化）
  * @return {string} 正規化された文字列
  */
-function normalizeJapaneseText(text) {
+function normalizeJapaneseText(text, isAccountItem = true) {
   try {
     if (!text) return '';
     // Unicode正規化（NFKC: 互換文字を標準形に統一）
     let normalized = String(text).normalize('NFKC');
     // 前後の空白を削除
     normalized = normalized.trim();
-    // 連続する空白を1つに統一
-    normalized = normalized.replace(/\s+/g, ' ');
+
+    // 勘定科目の場合のみ強い正規化を適用
+    if (isAccountItem) {
+      // 1. 括弧内の補足情報を除去（例：「減価償却費（製造）」→「減価償却費」）
+      normalized = normalized.replace(/[（(].*?[）)]/g, '');
+
+      // 2. 「及び」「及」「および」を統一
+      normalized = normalized.replace(/及び|及|および/g, '及');
+
+      // 3. 区切り文字を統一（「・」「、」「,」「　」などを削除）
+      normalized = normalized.replace(/[・、,\u3000]+/g, '');
+
+      // 4. 長音記号を統一（「ー」「－」「—」「―」など）
+      normalized = normalized.replace(/[－—―]/g, 'ー');
+
+      // 5. 連続する空白を削除
+      normalized = normalized.replace(/\s+/g, '');
+    } else {
+      // テーブル名/グループ名の場合は軽い正規化のみ（空白の統一のみ）
+      normalized = normalized.replace(/\s+/g, ' ');
+    }
+
+    // 前後の空白を再度削除
+    normalized = normalized.trim();
+
     return normalized;
   } catch (e) {
     Logger.log(`警告: テキスト正規化エラー: ${e.message}`);
     return String(text || '').trim();
   }
+}
+
+/**
+ * 2つの文字列のレーベンシュタイン距離（編集距離）を計算
+ * @param {string} str1 - 比較する文字列1
+ * @param {string} str2 - 比較する文字列2
+ * @return {number} 編集距離（小さいほど類似）
+ */
+function levenshteinDistance(str1, str2) {
+  const len1 = str1.length;
+  const len2 = str2.length;
+  const matrix = [];
+
+  // 初期化
+  for (let i = 0; i <= len1; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= len2; j++) {
+    matrix[0][j] = j;
+  }
+
+  // 動的計画法で編集距離を計算
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,     // 削除
+        matrix[i][j - 1] + 1,     // 挿入
+        matrix[i - 1][j - 1] + cost  // 置換
+      );
+    }
+  }
+
+  return matrix[len1][len2];
+}
+
+/**
+ * 2つの文字列の類似度を計算（0.0〜1.0、1.0が完全一致）
+ * @param {string} str1 - 比較する文字列1
+ * @param {string} str2 - 比較する文字列2
+ * @return {number} 類似度（0.0〜1.0）
+ */
+function calculateSimilarity(str1, str2) {
+  if (str1 === str2) return 1.0;
+  if (!str1 || !str2) return 0.0;
+
+  const distance = levenshteinDistance(str1, str2);
+  const maxLen = Math.max(str1.length, str2.length);
+
+  return 1.0 - (distance / maxLen);
+}
+
+/**
+ * 当期の項目リストから、前期・前々期の項目に最も類似する項目を見つける
+ * @param {string} targetItem - マッチング対象の項目名（前期または前々期）
+ * @param {Array<string>} currentItems - 当期の項目名リスト
+ * @param {number} threshold - 類似度の閾値（デフォルト: 0.7）
+ * @return {string|null} マッチした当期の項目名、またはnull
+ */
+function findBestMatch(targetItem, currentItems, threshold = 0.7) {
+  let bestMatch = null;
+  let bestScore = threshold;
+
+  const normalizedTarget = normalizeJapaneseText(targetItem);
+
+  currentItems.forEach(currentItem => {
+    const normalizedCurrent = normalizeJapaneseText(currentItem);
+    const similarity = calculateSimilarity(normalizedTarget, normalizedCurrent);
+
+    if (similarity > bestScore) {
+      bestScore = similarity;
+      bestMatch = currentItem;
+    }
+  });
+
+  if (bestMatch) {
+    Logger.log(`類似度マッチング: "${targetItem}" → "${bestMatch}" (類似度: ${bestScore.toFixed(2)})`);
+  }
+
+  return bestMatch;
 }
 
 /**
@@ -818,9 +1184,31 @@ function callGeminiApi(file) {
   return callWithRetry(() => {
     const API_KEY = getApiKey();  // キャッシュされたAPI KEYを取得
     const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + API_KEY;
-    const prompt = `このファイルには、「貸借対照表」「損益計算書」「販売費及び一般管理費内訳書」が含まれています。これらの書類から、記載されているすべての勘定科目と金額のペアを抽出してください。出力する際は、必ず以下の順番を守ってください。1. 「貸借対照表」のすべての項目を上から順に 2. 「損益計算書」のすべての項目を上から順に 3. 「販売費及び一般管理費内訳書」のすべての項目を上から順に。小計、合計、内訳項目も含め、勘定科目と金額が記載されている行は例外なくすべてを抽出対象とします。出力形式は「勘定科目,金額」のCSV形式にしてください。金額に通貨記号(¥)や桁区切りのカンマ(,)は含めず、半角数字のみで出力してください。タイトル、日付、会社名など、勘定科目ではないテキスト行は無視してください。例:\n流動資産,50000000\n現金及び預金,20000000\n売上高,123456789`;
+    const prompt = `このファイルには、「貸借対照表」「損益計算書」「製造原価報告書」「販売費及び一般管理費内訳書」の3期比較表が含まれています。これらの書類から、記載されているすべての勘定科目と3期分の金額（前々期、前期、当期）を抽出してください。
+
+【重要】
+- 各勘定科目について、前々期・前期・当期の3つの金額を必ず抽出してください
+- 金額が記載されていない期は「0」と出力してください
+- 出力形式：「勘定科目,前々期金額,前期金額,当期金額」のCSV形式
+- 金額に通貨記号(¥)や桁区切りのカンマ(,)は含めず、半角数字のみで出力してください
+
+【抽出順序】
+1. 「貸借対照表」のすべての項目を上から順に
+2. 「損益計算書」のすべての項目を上から順に
+3. 「製造原価報告書」のすべての項目を上から順に（存在する場合）
+4. 「販売費及び一般管理費内訳書」のすべての項目を上から順に（存在する場合）
+
+【対象項目】
+- 小計、合計、内訳項目も含め、勘定科目と金額が記載されている行は例外なくすべてを抽出対象とします
+- タイトル、日付、会社名など、勘定科目ではないテキスト行は無視してください
+
+【出力例】
+流動資産,45000000,48000000,50000000
+現金及び預金,18000000,19000000,20000000
+売上高,110000000,115000000,123456789
+材料費,0,0,5000000`;
     const requestBody = {
-      "contents": [{"parts": [{ "text": prompt }, { "inline_data": { "mime_type": file.getMimeType(), "data": Utilities.base64Encode(file.getBlob().getBytes()) } }] }], "generationConfig": { "temperature": 0.0, "topP": 1, "maxOutputTokens": 8192 }
+      "contents": [{"parts": [{ "text": prompt }, { "inline_data": { "mime_type": file.getMimeType(), "data": Utilities.base64Encode(file.getBlob().getBytes()) } }] }], "generationConfig": { "temperature": 0.0, "topP": 1, "maxOutputTokens": 32768 }
     };
     const options = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(requestBody), 'muteHttpExceptions': true };
     const response = UrlFetchApp.fetch(API_ENDPOINT, options);
@@ -836,9 +1224,9 @@ function callGeminiApi(file) {
 }
 
 /**
- * CSV形式のOCR結果をパースし、正規化とバリデーションを適用
- * @param {string} text - CSV形式のテキスト
- * @return {Array<Array<string>>} [[項目名, 金額], ...] の配列
+ * CSV形式のOCR結果をパースし、正規化とバリデーションを適用（3期分対応）
+ * @param {string} text - CSV形式のテキスト（項目名,前々期,前期,当期）
+ * @return {Array<Array<string>>} [[項目名, 前々期, 前期, 当期], ...] の配列
  */
 function parseItemValueCsvResult(text) {
   const cleanedText = text.replace(/```csv\n?/g, '').replace(/```/g, '').trim();
@@ -850,9 +1238,10 @@ function parseItemValueCsvResult(text) {
 
   for (const line of lines) {
     const parts = line.split(',');
-    if (parts.length >= 2) {
+
+    // 3期分のデータ（項目名 + 前々期 + 前期 + 当期 = 4列）が必要
+    if (parts.length >= 4) {
       let item = parts[0].trim();
-      let value = parts.slice(1).join('').trim();
 
       // 日本語テキストを正規化
       item = normalizeJapaneseText(item);
@@ -863,8 +1252,10 @@ function parseItemValueCsvResult(text) {
         continue;
       }
 
-      // 数値を堅牢に解析
-      const parsedValue = parseJapaneseNumber(value);
+      // 3期分の金額を解析
+      const amount2PeriodsAgo = parseJapaneseNumber(parts[1].trim()); // 前々期
+      const amount1PeriodAgo = parseJapaneseNumber(parts[2].trim());  // 前期
+      const currentAmount = parseJapaneseNumber(parts[3].trim());     // 当期
 
       // 重複項目のログ記録
       if (seenItems.has(item)) {
@@ -873,11 +1264,26 @@ function parseItemValueCsvResult(text) {
       }
 
       seenItems.add(item);
-      results.push([item, parsedValue]);
+      results.push([item, amount2PeriodsAgo, amount1PeriodAgo, currentAmount]);
+
+      Logger.log(`✓ 解析成功: ${item} (前々期:${amount2PeriodsAgo}, 前期:${amount1PeriodAgo}, 当期:${currentAmount})`);
+    } else if (parts.length >= 2) {
+      // 後方互換性：2列形式（旧形式）の場合は当期のみとして扱う
+      let item = parts[0].trim();
+      item = normalizeJapaneseText(item);
+
+      if (!isSafeText(item)) continue;
+      if (seenItems.has(item)) continue;
+
+      const currentAmount = parseJapaneseNumber(parts[1].trim());
+      seenItems.add(item);
+      results.push([item, 0, 0, currentAmount]); // 前々期・前期は0
+
+      Logger.log(`⚠ 2列形式（旧形式）で解析: ${item} (当期のみ:${currentAmount})`);
     }
   }
 
-  Logger.log(`OCR結果: ${results.length}件の項目を抽出しました`);
+  Logger.log(`OCR結果: ${results.length}件の項目を抽出しました（3期分対応）`);
   return results;
 }
 
@@ -1019,7 +1425,7 @@ function prepareExcelTransferData(ocrData) {
 
   ocrData.forEach(row => {
     if (row[0] && row[1] !== undefined && row[1] !== '') {
-      const itemName = normalizeJapaneseText(row[0]);
+      const itemName = normalizeJapaneseText(row[0], true);  // 勘定科目名: 強い正規化
       const amount = parseJapaneseNumber(row[1]);
 
       // 安全性チェック
@@ -1049,92 +1455,72 @@ function prepareExcelTransferData(ocrData) {
 function classifyItemToTable(itemName) {
   const normalized = itemName.toLowerCase();
 
-  // 集計行を除外（「計」「合計」「小計」「総計」を含む項目は転記不要）
+  // 集計行を除外
   if (normalized.match(/計$|合計|小計|総計|^計/)) {
-    Logger.log(`集計行のためスキップ: ${itemName}`);
     return null;
   }
 
-  // ===== 優先度A: BS項目（キーワードが明確なものから） =====
+  // ===== 優先度A: BS項目 =====
   // 純資産
-  if (normalized.match(/資本金|準備金|剰余金|自己株式/)) {
-    return { tableKey: 'BS:純資産', categoryKey: null };
-  }
+  if (normalized.match(/資本金/)) return { tableKey: 'BS:純資産', categoryKey: '資本金' };
+  if (normalized.match(/準備金/)) return { tableKey: 'BS:純資産', categoryKey: '資本剰余金' };
+  if (normalized.match(/剰余金/)) return { tableKey: 'BS:純資産', categoryKey: '利益剰余金' };
+  if (normalized.match(/自己株式/)) return { tableKey: 'BS:純資産', categoryKey: '自己株式' };
   // 固定負債
-  if (normalized.match(/長期借入金|社債|退職給付引当金/)) {
-    return { tableKey: 'BS:固定負債', categoryKey: null };
-  }
+  if (normalized.match(/長期借入金/)) return { tableKey: 'BS:固定負債', categoryKey: '長期借入金' };
+  if (normalized.match(/社債/)) return { tableKey: 'BS:固定負債', categoryKey: '社債' };
+  if (normalized.match(/退職給付引当金/)) return { tableKey: 'BS:固定負債', categoryKey: '退職給付引当金' };
   // 流動負債
-  if (normalized.match(/支払手形|買掛金|短期借入金|未払金|未払費用|前受金|預り金|賞与引当金/)) {
-    return { tableKey: 'BS:流動負債', categoryKey: null };
-  }
+  if (normalized.match(/支払手形|買掛金/)) return { tableKey: 'BS:流動負債', categoryKey: '仕入債務' };
+  if (normalized.match(/短期借入金/)) return { tableKey: 'BS:流動負債', categoryKey: '短期借入金' };
+  if (normalized.match(/未払金|未払費用/)) return { tableKey: 'BS:流動負債', categoryKey: '未払金' };
+  if (normalized.match(/前受金|預り金/)) return { tableKey: 'BS:流動負債', categoryKey: 'その他流動負債' };
   // 固定資産
-  if (normalized.match(/建物|構築物|機械|装置|車両|運搬具|工具|器具|備品|土地|投資有価証券|長期貸付金|繰延資産/)) {
-    return { tableKey: 'BS:固定資産', categoryKey: null };
-  }
+  if (normalized.match(/建物|構築物|機械|装置|車両|運搬具|工具|器具|備品|土地/)) return { tableKey: 'BS:固定資産', categoryKey: '有形固定資産' };
+  if (normalized.match(/のれん|営業権/)) return { tableKey: 'BS:固定資産', categoryKey: '無形固定資産' };
+  if (normalized.match(/投資有価証券|長期貸付金|繰延資産/)) return { tableKey: 'BS:固定資産', categoryKey: '投資その他' };
   // 流動資産
-  if (normalized.match(/現金|預金|売掛金|受取手形|商品|製品|仕掛品|原材料|貯蔵品|前渡金|前払費用|未収入金|貸倒引当金/)) {
-    return { tableKey: 'BS:流動資産', categoryKey: null };
-  }
+  if (normalized.match(/現金|預金/)) return { tableKey: 'BS:流動資産', categoryKey: '現金・預金' };
+  if (normalized.match(/受取手形|売掛金/)) return { tableKey: 'BS:流動資産', categoryKey: '売上債権' };
+  if (normalized.match(/商品|製品|仕掛品|原材料|貯蔵品/)) return { tableKey: 'BS:流動資産', categoryKey: '棚卸資産' };
+  if (normalized.match(/前渡金|前払費用|未収入金|貸倒引当金/)) return { tableKey: 'BS:流動資産', categoryKey: 'その他流動資産' };
+
+  // ===== 優先度B: 製造原価報告書項目 =====
+  if (normalized.match(/期首.*仕掛品/)) return { tableKey: '製造原価報告書', categoryKey: '期首仕掛品' };
+  if (normalized.match(/期末.*仕掛品/)) return { tableKey: '製造原価報告書', categoryKey: '期末仕掛品' };
+  if (normalized.match(/材料費|原料費|主要材料費|買入部品費/)) return { tableKey: '製造原価報告書', categoryKey: '材料費' };
+  if (normalized.match(/労務費|製造.*賃金|製造.*給料/)) return { tableKey: '製造原価報告書', categoryKey: '労務費' };
+  if (normalized.match(/製造経費|工場経費|外注加工費|減価償却費/)) return { tableKey: '製造原価報告書', categoryKey: '経費' };
 
 
-  // ===== 優先度B: PL項目（その他損益など、より具体的なものから）===== 
+  // ===== 優先度C: PL項目（その他損益など、より具体的なものから）=====
   // ⑤ その他損益
-  if (normalized.match(/受取利息|預金利息|貸付金利息|受取配当金|配当金|有価証券利息|雑収入|受取手数料/)) {
-    return { tableKey: '⑤その他損益比較表', categoryKey: '営業外収益' };
-  }
-  if (normalized.match(/支払利息|借入金利息|社債利息|手形売却損|雑損失/)) {
-    return { tableKey: '⑤その他損益比較表', categoryKey: '営業外費用' };
-  }
-  if (normalized.match(/固定資産売却益|投資有価証券売却益|特別利益/)) {
-    return { tableKey: '⑤その他損益比較表', categoryKey: '特別利益' };
-  }
-  if (normalized.match(/固定資産売却損|固定資産除却損|減損損失|特別損失/)) {
-    return { tableKey: '⑤その他損益比較表', categoryKey: '特別損失' };
-  }
+  if (normalized.match(/受取利息|預金利息|貸付金利息|受取配当金|配当金|有価証券利息|雑収入|受取手数料/)) return { tableKey: '⑤その他損益比較表', categoryKey: '営業外収益' };
+  if (normalized.match(/支払利息|借入金利息|社債利息|手形売却損|雑損失/)) return { tableKey: '⑤その他損益比較表', categoryKey: '営業外費用' };
+  if (normalized.match(/固定資産売却益|投資有価証券売却益|特別利益/)) return { tableKey: '⑤その他損益比較表', categoryKey: '特別利益' };
+  if (normalized.match(/固定資産売却損|固定資産除却損|減損損失|特別損失/)) return { tableKey: '⑤その他損益比較表', categoryKey: '特別損失' };
 
   // ③ 変動費・原価関連
-  if (normalized.match(/期首.*棚卸|期首.*在庫|期首商品/)) {
-    return { tableKey: '③変動費内訳比較表', categoryKey: '期首棚卸高' };
-  }
-  if (normalized.match(/期末.*棚卸|期末.*在庫|期末商品/)) {
-    return { tableKey: '③変動費内訳比較表', categoryKey: '期末棚卸高' };
-  }
-  if (normalized.match(/商品仕入|期中仕入|当期.*仕入|仕入高|材料仕入|原材料費|材料費|副資材|外注.*費|外注加工費|製品仕入|商品.*原価/)) {
-    return { tableKey: '③変動費内訳比較表', categoryKey: '変動費' };
-  }
+  if (normalized.match(/期首.*棚卸|期首.*在庫|期首商品/)) return { tableKey: '③変動費内訳比較表', categoryKey: '期首棚卸高' };
+  if (normalized.match(/期末.*棚卸|期末.*在庫|期末商品/)) return { tableKey: '③変動費内訳比較表', categoryKey: '期末棚卸高' };
+  if (normalized.match(/商品仕入|期中仕入|当期.*仕入|仕入高|材料仕入|原材料費|材料費|副資材|外注.*費|外注加工費|製品仕入|商品.*原価/)) return { tableKey: '③変動費内訳比較表', categoryKey: '変動費' };
 
   // ④ 製造経費
-  if (normalized.match(/製造.*給料|製造.*賃金|製造.*賞与|工場.*給料|工場.*賃金|作業員.*給料/)) {
-    return { tableKey: '④製造経費比較表', categoryKey: '労務費' };
-  }
-  if (normalized.match(/製造.*経費|工場.*経費|製造.*費|動力費|燃料費|工具.*費|機械.*費|設備.*費|作業.*費/) &&
-      !normalized.match(/販売費|管理費/)) {
-    return { tableKey: '④製造経費比較表', categoryKey: 'その他経費' };
-  }
+  if (normalized.match(/製造.*給料|製造.*賃金|製造.*賞与|工場.*給料|工場.*賃金|作業員.*給料/)) return { tableKey: '④製造経費比較表', categoryKey: '労務費' };
+  if (normalized.match(/製造.*経費|工場.*経費|製造.*費|動力費|燃料費|工具.*費|機械.*費|設備.*費|作業.*費/) && !normalized.match(/販売費|管理費/)) return { tableKey: '④製造経費比較表', categoryKey: 'その他経費' };
 
   // ② 販管費（人件費）
-  if (normalized.match(/役員報酬|役員.*給料|給料.*手当|給与.*手当|賃金|賞与|ボーナス|雑給|法定福利費|福利厚生費|厚生費|退職金|退職給付/) &&
-      !normalized.match(/製造|工場|作業/)) {
-    return { tableKey: '②販売費及び一般管理費比較表', categoryKey: '人件費' };
-  }
+  if (normalized.match(/役員報酬|役員.*給料|給料.*手当|給与.*手当|賃金|賞与|ボーナス|雑給|法定福利費|福利厚生費|厚生費|退職金|退職給付/) && !normalized.match(/製造|工場|作業/)) return { tableKey: '②販売費及び一般管理費比較表', categoryKey: '人件費' };
 
   // ② 販管費（その他経費）
-  if (normalized.match(/支払家賃|地代家賃|賃借料|水道.*費|光熱費|電気代|ガス代|通信費|電話代|旅費.*交通費|交通費|旅費|出張.*費|広告.*費|宣伝費|販促費|荷造.*費|運賃|保険料|租税.*公課|公租公課|修繕費|消耗品費|事務.*費|会議費|交際費|接待.*費|寄付金|諸会費|雑費|減価償却費|リース料/) &&
-      !normalized.match(/製造|工場/)) {
-    return { tableKey: '②販売費及び一般管理費比較表', categoryKey: 'その他' };
-  }
+  if (normalized.match(/支払家賃|地代家賃|賃借料|水道.*費|光熱費|電気代|ガス代|通信費|電話代|旅費.*交通費|交通費|旅費|出張.*費|広告.*費|宣伝費|販促費|荷造.*費|運賃|保険料|租税.*公課|公租公課|修繕費|消耗品費|事務.*費|会議費|交際費|接待.*費|寄付金|諸会費|雑費|減価償却費|リース料/) && !normalized.match(/製造|工場/)) return { tableKey: '②販売費及び一般管理費比較表', categoryKey: 'その他' };
 
   // ① 売上高
-  if (normalized.match(/売上高|商品.*売上|製品.*売上|売上|収益|販売.*収入/) &&
-      !normalized.match(/売上原価|売上総利益/)) {
-    return { tableKey: '①売上高内訳表', categoryKey: null };
-  }
+  if (normalized.match(/売上高|商品.*売上|製品.*売上|売上|収益|販売.*収入/) && !normalized.match(/売上原価|売上総利益/)) return { tableKey: '①売上高内訳表', categoryKey: null };
 
   Logger.log(`⚠ 自動分類できませんでした: ${itemName}（手動で設定してください）`);
   return null;
 }
-
 /**
  * Google Sheetsの範囲からセル値を取得（複数期対応）
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - 対象シート
@@ -1159,7 +1545,7 @@ function readExcelRowData(sheet, itemColumn, row, periodColumns) {
   });
 
   return {
-    itemName: normalizeJapaneseText(itemName),
+    itemName: normalizeJapaneseText(itemName, true),  // 勘定科目名: 強い正規化
     amounts: amounts,
     row: row
   };
@@ -1191,33 +1577,39 @@ function readExcelTableData(sheet, itemColumn, startRow, endRow, periodColumns) 
  * Google Sheetsのセルに複数期の金額を書き込む（個別書き込み用・非推奨）
  * @deprecated バッチ操作の方が高速です。writeExcelBatchDataを使用してください。
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - 対象シート
- * @param {string} itemColumn - 項目列
- * @param {number} row - 行番号
+ * @param {string} itemColumn - 項目列（デフォルト）
+ * @param {number} row - 行番号（デフォルト）
  * @param {string} itemName - 項目名
  * @param {Object} amounts - {{前々期: number, 前期: number, 当期: number}}
  * @param {Object} periodColumns - 期別列設定
+ * @param {number|null} targetRow - マッピングシートで指定された行（優先）
+ * @param {string|null} targetColumn - マッピングシートで指定された列（優先）
  */
-function writeExcelRowData(sheet, itemColumn, row, itemName, amounts, periodColumns) {
+function writeExcelRowData(sheet, itemColumn, row, itemName, amounts, periodColumns, targetRow = null, targetColumn = null) {
   try {
+    // マッピングシートで指定された行・列を優先
+    const actualRow = targetRow || row;
+    const actualItemColumn = targetColumn || itemColumn;
+
     // 項目名を書き込み
-    if (itemColumn && row) {
-      sheet.getRange(`${itemColumn}${row}`).setValue(itemName);
+    if (actualItemColumn && actualRow) {
+      sheet.getRange(`${actualItemColumn}${actualRow}`).setValue(itemName);
+      Logger.log(`📝 項目名書き込み: "${itemName}" → ${actualItemColumn}${actualRow}`);
     }
 
-    // 各期の金額を書き込み
+    // 各期の金額を書き込み（0も含めてすべて書き込む）
     Object.keys(periodColumns).forEach(period => {
       const colObj = periodColumns[period];
       const amountCol = colObj.金額;
       const amount = amounts[period] || 0;
 
-      if (amount !== 0) {
-        if (amountCol && row) {
-          sheet.getRange(`${amountCol}${row}`).setValue(amount);
-        }
+      if (amountCol && actualRow) {
+        sheet.getRange(`${amountCol}${actualRow}`).setValue(amount);
+        Logger.log(`💰 金額書き込み: ${period}=${amount} → ${amountCol}${actualRow}`);
       }
     });
 
-    Logger.log(`✓ 書き込み成功: "${itemName}" → ${itemColumn}${row}`);
+    Logger.log(`✓ 書き込み成功: "${itemName}" → ${itemColumn}${row} (前々期:${amounts['前々期']}, 前期:${amounts['前期']}, 当期:${amounts['当期']})`);
   } catch (e) {
     Logger.log(`✗ 書き込みエラー: "${itemName}" (行${row}) - ${e.message}`);
     throw e;
@@ -1337,11 +1729,12 @@ function transferToTable01_SalesBreakdown(sheet, ocrItems) {
     const currentRow = tableConfig.dataStartRow + writeRowIndex;
 
     if (item.itemName && item.amounts) {
-      writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols);
+      // マッピングシートで指定された行・列を優先
+      writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols, item.targetRow, item.targetColumn);
       transferLog.push({
         tableNumber: '①',
         itemName: item.itemName,
-        row: currentRow,
+        row: item.targetRow || currentRow,  // 実際に転記された行
         status: '成功',
         amounts: item.amounts
       });
@@ -1413,13 +1806,14 @@ function transferToTable03_VariableCosts(sheet, ocrItems) {
       const currentRow = group.dataStartRow + i;
       const item = sortedItems[i];
 
-      writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols);
+      // マッピングシートで指定された行・列を優先
+      writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols, item.targetRow, item.targetColumn);
 
       transferLog.push({
         tableNumber: '③',
         group: groupName,
         itemName: item.itemName,
-        row: currentRow,
+        row: item.targetRow || currentRow,  // 実際に転記された行
         status: '成功',
         amounts: item.amounts
       });
@@ -1507,13 +1901,14 @@ function transferToTable04_ManufacturingExpenses(sheet, ocrItems) {
       const currentRow = laborGroup.dataStartRow + i;
       const item = sortedLabor[i];
 
-      writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols);
+      // マッピングシートで指定された行・列を優先
+      writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols, item.targetRow, item.targetColumn);
 
       transferLog.push({
         tableNumber: '④',
         group: '労務費',
         itemName: item.itemName,
-        row: currentRow,
+        row: item.targetRow || currentRow,  // 実際に転記された行
         status: '成功',
         amounts: item.amounts
       });
@@ -1554,13 +1949,14 @@ function transferToTable04_ManufacturingExpenses(sheet, ocrItems) {
       const currentRow = otherGroup.dataStartRow + i;
       const item = sortedOther[i];
 
-      writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols);
+      // マッピングシートで指定された行・列を優先
+      writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols, item.targetRow, item.targetColumn);
 
       transferLog.push({
         tableNumber: '④',
         group: 'その他経費',
         itemName: item.itemName,
-        row: currentRow,
+        row: item.targetRow || currentRow,  // 実際に転記された行
         status: '成功',
         amounts: item.amounts
       });
@@ -1641,13 +2037,14 @@ function transferToTable02_SGA(sheet, ocrItems) {
     const currentRow = personnelGroup.dataStartRow + i;
     const item = sortedPersonnel[i];
 
-    writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols);
+    // マッピングシートで指定された行・列を優先
+    writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols, item.targetRow, item.targetColumn);
 
     transferLog.push({
       tableNumber: '②',
       group: '人件費',
       itemName: item.itemName,
-      row: currentRow,
+      row: item.targetRow || currentRow,  // 実際に転記された行
       status: '成功',
       amounts: item.amounts
     });
@@ -1683,13 +2080,14 @@ function transferToTable02_SGA(sheet, ocrItems) {
     const currentRow = otherGroup.dataStartRow + i;
     const item = sortedOther[i];
 
-    writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols);
+    // マッピングシートで指定された行・列を優先
+    writeExcelRowData(sheet, tableConfig.itemColumn, currentRow, item.itemName, item.amounts, periodCols, item.targetRow, item.targetColumn);
 
     transferLog.push({
       tableNumber: '②',
       group: 'その他経費',
       itemName: item.itemName,
-      row: currentRow,
+      row: item.targetRow || currentRow,  // 実際に転記された行
       status: '成功',
       amounts: item.amounts
     });
@@ -1829,8 +2227,9 @@ function transferToBSTable(sheet, classifiedBsData, bsConfig) {
     const itemsToTransfer = sortedItems.slice(0, maxRows);
     itemsToTransfer.forEach((item, i) => {
       const row = groupConfig.dataStartRow + i;
-      writeExcelRowData(sheet, itemColumn, row, item.itemName, item.amounts, periodColumns);
-      transferLog.push({ tableNumber: 'BS', group: groupName, itemName: item.itemName, row: row, status: '成功', amounts: item.amounts });
+      // マッピングシートで指定された行・列を優先
+      writeExcelRowData(sheet, itemColumn, row, item.itemName, item.amounts, periodColumns, item.targetRow, item.targetColumn);
+      transferLog.push({ tableNumber: 'BS', group: groupName, itemName: item.itemName, row: item.targetRow || row, status: '成功', amounts: item.amounts });
     });
 
     // 行数を超えた項目を「その他」として集計
@@ -1878,58 +2277,161 @@ function classifyOcrDataByMapping(ss, ocrData) {
     return classifiedData;
   }
 
-  const mappingRange = mappingSheet.getRange(2, 1, mappingSheet.getLastRow() - 1, 3).getValues();
+  const mappingRange = mappingSheet.getRange(2, 1, mappingSheet.getLastRow() - 1, 5).getValues();  // 5列に拡張（D列・E列追加）
   const mappingData = {};
+  const plMappingKeys = [];  // デバッグ用: PL項目のマッピング一覧
+
   mappingRange.forEach(row => {
     if (row[0]) {
-      mappingData[normalizeJapaneseText(row[0])] = {
-        table: normalizeJapaneseText(row[1] || ''),
-        group: normalizeJapaneseText(row[2] || '')
+      const normalizedKey = normalizeJapaneseText(row[0], true);  // 勘定科目名: 強い正規化
+      let normalizedTable = normalizeJapaneseText(row[1] || '', false);  // テーブル名: 軽い正規化
+
+      // テーブル名の正規化: 通常の数字を丸数字に変換
+      // 例: "1売上高内訳表" → "①売上高内訳表"
+      normalizedTable = normalizedTable
+        .replace(/^1売上高/, '①売上高')
+        .replace(/^2販売費/, '②販売費')
+        .replace(/^3変動費/, '③変動費')
+        .replace(/^4製造経費/, '④製造経費')
+        .replace(/^5その他/, '⑤その他');
+
+      // D列・E列から転記先行・列を取得（任意）
+      const targetRow = row[3] ? parseInt(row[3]) : null;  // D列: 転記先行
+      const targetColumn = row[4] ? String(row[4]).trim().toUpperCase() : null;  // E列: 転記先列
+
+      mappingData[normalizedKey] = {
+        table: normalizedTable,
+        group: normalizeJapaneseText(row[2] || '', false),  // グループ名: 軽い正規化
+        targetRow: targetRow,      // 転記先行（null = 自動）
+        targetColumn: targetColumn  // 転記先列（null = 自動）
       };
+
+      // PL項目のマッピングを記録（BS以外）
+      if (normalizedTable && !normalizedTable.startsWith('BS:')) {
+        plMappingKeys.push(`"${normalizedKey}" → ${normalizedTable}`);
+      }
     }
   });
 
+  // デバッグ: マッピングシート内のPL項目を確認
+  Logger.log(`========== マッピングシート内のPL項目数: ${plMappingKeys.length}件 ==========`);
+  Logger.log(`先頭10件:`);
+  plMappingKeys.slice(0, 10).forEach(mapping => Logger.log(`  ${mapping}`));
+
+  const unmappedPlItems = [];  // 未マッピングのPL項目リスト
+  const ocrPlItems = [];  // デバッグ用: OCRシートから読み込んだPL候補項目
   ocrData.forEach(row => {
-    if (!row[0] || row[1] === undefined) return;
+    // OCRデータの検証（4列形式: 項目名, 前々期, 前期, 当期）
+    if (!row[0]) {
+      return;  // 項目名が空の行はスキップ
+    }
 
-    const itemName = normalizeJapaneseText(row[0]);
-    const amount = parseJapaneseNumber(row[1]);
+    const itemName = normalizeJapaneseText(row[0], true);  // 勘定科目名: 強い正規化
+    
+    // 3期分の金額を取得（4列形式）
+    const amount2PeriodsAgo = row[1] !== undefined ? parseJapaneseNumber(row[1]) : 0; // 前々期
+    const amount1PeriodAgo = row[2] !== undefined ? parseJapaneseNumber(row[2]) : 0;  // 前期
+    const currentAmount = row[3] !== undefined ? parseJapaneseNumber(row[3]) : 0;     // 当期
 
-    if (!isSafeText(itemName) || isNaN(amount) || itemName.includes('計') || itemName.includes('合計')) {
+    // 安全性チェック
+    if (!isSafeText(itemName)) {
+      Logger.log(`⚠ スキップ: ${itemName} (安全でない項目名)`);
+      return;
+    }
+
+    // 集計行の除外（より正確な判定）
+    // 除外対象: 「〇〇計」「合計」「小計」「総計」で終わる、または明確な集計行
+    const isAggregationRow = 
+      itemName.endsWith('計') || 
+      itemName.endsWith('合計') || 
+      itemName.endsWith('小計') || 
+      itemName.endsWith('総計') ||
+      itemName === '合計' ||
+      itemName === '小計' ||
+      itemName === '総計' ||
+      itemName.includes('の部合計') ||
+      itemName.includes('及び純資産合計');
+
+    if (isAggregationRow) {
+      Logger.log(`⚠ スキップ: ${itemName} (集計行)`);
       return;
     }
 
     const itemData = {
       itemName: itemName,
-      amounts: { '前々期': 0, '前期': 0, '当期': amount }
+      amounts: { 
+        '前々期': amount2PeriodsAgo, 
+        '前期': amount1PeriodAgo, 
+        '当期': currentAmount 
+      }
     };
+
+    Logger.log(`📊 OCRデータ読込: ${itemName} (前々期:${amount2PeriodsAgo}, 前期:${amount1PeriodAgo}, 当期:${currentAmount})`);
 
     const userMapping = mappingData[itemName];
     if (!userMapping || !userMapping.table) {
-      Logger.log(`未マッピング（または転記先が空）: "${itemName}"`);
+      // BS項目でない場合はPL未マッピング項目として記録
+      unmappedPlItems.push(itemName);
+      Logger.log(`⚠ 未マッピング（または転記先が空）: "${itemName}"`);
       return;
     }
 
-    const { table, group } = userMapping;
+    // OCRから読み込んだPL項目を記録（デバッグ用）
+    if (!userMapping.table.startsWith('BS:')) {
+      ocrPlItems.push(`"${itemName}" → ${userMapping.table}`);
+    }
+
+    const { table, group, targetRow, targetColumn } = userMapping;
+
+    // itemDataに転記先行・列情報を追加
+    const enrichedItemData = {
+      ...itemData,
+      mappedTable: table,
+      mappedGroup: group,
+      targetRow: targetRow,        // マッピングシートで指定された行（null = 自動）
+      targetColumn: targetColumn    // マッピングシートで指定された列（null = 自動）
+    };
 
     if (table.startsWith('BS:')) {
       if (classifiedData[table]) {
-        classifiedData[table].push({ ...itemData, mappedTable: table, mappedGroup: group });
-        Logger.log(`✓ BSマッピング適用: ${itemName} → ${table}`);
+        classifiedData[table].push(enrichedItemData);
+        Logger.log(`✓ BSマッピング適用: ${itemName} → ${table} [${group}]`);
       }
     } else if (table.startsWith('⑤')) {
       const category = group || '営業外収益';
       if (classifiedData[table] && classifiedData[table][category]) {
-        classifiedData[table][category].push({ ...itemData, mappedTable: table, mappedGroup: category });
+        const enrichedItemData_withCategory = { ...enrichedItemData, mappedGroup: category };
+        classifiedData[table][category].push(enrichedItemData_withCategory);
         Logger.log(`✓ PLマッピング適用: ${itemName} → ${table} [${category}]`);
       }
     } else if (classifiedData[table]) {
-      classifiedData[table].push({ ...itemData, mappedTable: table, mappedGroup: group });
+      classifiedData[table].push(enrichedItemData);
       Logger.log(`✓ PLマッピング適用: ${itemName} → ${table} [${group}]`);
     }
   });
 
-  return classifiedData;
+  // ========== デバッグサマリー: PL項目のマッピング状況 ==========
+  Logger.log(`\n========== PL項目マッピング結果サマリー ==========`);
+  Logger.log(`OCRから読み込んだPL項目（マッピング成功）: ${ocrPlItems.length}件`);
+  Logger.log(`先頭10件:`);
+  ocrPlItems.slice(0, 10).forEach(item => Logger.log(`  ${item}`));
+
+  Logger.log(`\n未マッピングのPL候補項目: ${unmappedPlItems.length}件`);
+  Logger.log(`先頭10件:`);
+  unmappedPlItems.slice(0, 10).forEach(item => Logger.log(`  "${item}"`));
+  Logger.log(`==================================================\n`);
+
+  return {
+    classifiedData: classifiedData,
+    debugInfo: {
+      plMappingCount: plMappingKeys.length,
+      plMappingSample: plMappingKeys.slice(0, 10),
+      ocrPlCount: ocrPlItems.length,
+      ocrPlSample: ocrPlItems.slice(0, 10),
+      unmappedCount: unmappedPlItems.length,
+      unmappedSample: unmappedPlItems.slice(0, 10)
+    }
+  };
 }
 
 /**
@@ -1976,8 +2478,77 @@ function startStep3_transferDataToExcel() {
 
 
   // 2. OCRデータとマッピング情報を読み込み、分類
-  const ocrData = ocrSheet.getRange(1, 1, ocrSheet.getLastRow(), 2).getValues();
-  const classifiedData = classifyOcrDataByMapping(ss, ocrData);
+  const ocrData = ocrSheet.getRange(2, 1, ocrSheet.getLastRow() - 1, 4).getValues();  // 4列（項目名、前々期、前期、当期）+ ヘッダー行をスキップ
+  const result = classifyOcrDataByMapping(ss, ocrData);
+  const classifiedData = result.classifiedData;
+  const debugInfo = result.debugInfo;
+
+  // ========== デバッグログ: 分類結果の確認 ==========
+  const plTotal = classifiedData['①売上高内訳表'].length + classifiedData['②販売費及び一般管理費比較表'].length + classifiedData['③変動費内訳比較表'].length + classifiedData['④製造経費比較表'].length + classifiedData['⑤その他損益比較表']['営業外収益'].length + classifiedData['⑤その他損益比較表']['営業外費用'].length + classifiedData['⑤その他損益比較表']['特別利益'].length + classifiedData['⑤その他損益比較表']['特別損失'].length;
+  const bsTotal = classifiedData['BS:流動資産'].length + classifiedData['BS:固定資産'].length + classifiedData['BS:流動負債'].length + classifiedData['BS:固定負債'].length + classifiedData['BS:純資産'].length;
+
+  // デバッグ情報を含めた詳細メッセージ
+  let debugMessage = '========== 分類結果サマリー ==========\n\n';
+
+  // マッピングシート情報
+  debugMessage += '【マッピングシート】\n';
+  debugMessage += 'PL項目マッピング数: ' + debugInfo.plMappingCount + '件\n';
+  if (debugInfo.plMappingSample.length > 0) {
+    debugMessage += '先頭5件:\n';
+    debugInfo.plMappingSample.slice(0, 5).forEach(item => {
+      debugMessage += '  ' + item + '\n';
+    });
+  }
+  debugMessage += '\n';
+
+  // OCR PL項目情報
+  debugMessage += '【OCRシートのPL項目（マッピング成功）】\n';
+  debugMessage += 'マッピング成功: ' + debugInfo.ocrPlCount + '件\n';
+  if (debugInfo.ocrPlSample.length > 0) {
+    debugMessage += '先頭5件:\n';
+    debugInfo.ocrPlSample.slice(0, 5).forEach(item => {
+      debugMessage += '  ' + item + '\n';
+    });
+  }
+  debugMessage += '\n';
+
+  // 未マッピング項目
+  debugMessage += '【未マッピング項目】\n';
+  debugMessage += '未マッピング: ' + debugInfo.unmappedCount + '件\n';
+  if (debugInfo.unmappedSample.length > 0) {
+    debugMessage += '先頭10件:\n';
+    debugInfo.unmappedSample.forEach(item => {
+      debugMessage += '  "' + item + '"\n';
+    });
+  }
+  debugMessage += '\n';
+
+  debugMessage += '【PLテーブル分類結果】\n';
+  debugMessage += '①売上高内訳表: ' + classifiedData['①売上高内訳表'].length + '件\n';
+  debugMessage += '②販売費及び一般管理費比較表: ' + classifiedData['②販売費及び一般管理費比較表'].length + '件\n';
+  debugMessage += '③変動費内訳比較表: ' + classifiedData['③変動費内訳比較表'].length + '件\n';
+  debugMessage += '④製造経費比較表: ' + classifiedData['④製造経費比較表'].length + '件\n';
+  debugMessage += '⑤その他損益比較表:\n';
+  debugMessage += '  営業外収益: ' + classifiedData['⑤その他損益比較表']['営業外収益'].length + '件\n';
+  debugMessage += '  営業外費用: ' + classifiedData['⑤その他損益比較表']['営業外費用'].length + '件\n';
+  debugMessage += '  特別利益: ' + classifiedData['⑤その他損益比較表']['特別利益'].length + '件\n';
+  debugMessage += '  特別損失: ' + classifiedData['⑤その他損益比較表']['特別損失'].length + '件\n';
+  debugMessage += 'PL小計: ' + plTotal + '件\n\n';
+
+  debugMessage += '【BSテーブル分類結果】\n';
+  debugMessage += 'BS:流動資産: ' + classifiedData['BS:流動資産'].length + '件\n';
+  debugMessage += 'BS:固定資産: ' + classifiedData['BS:固定資産'].length + '件\n';
+  debugMessage += 'BS:流動負債: ' + classifiedData['BS:流動負債'].length + '件\n';
+  debugMessage += 'BS:固定負債: ' + classifiedData['BS:固定負債'].length + '件\n';
+  debugMessage += 'BS:純資産: ' + classifiedData['BS:純資産'].length + '件\n';
+  debugMessage += 'BS小計: ' + bsTotal + '件\n\n';
+
+  debugMessage += '合計: ' + (plTotal + bsTotal) + '件\n';
+  debugMessage += '========================================';
+
+  Logger.log(debugMessage);
+  SpreadsheetApp.getUi().alert('🔍 分類結果を確認してください', debugMessage, SpreadsheetApp.getUi().ButtonSet.OK);
+  // ====================================================
 
   let allLogs = [];
 

@@ -1,0 +1,646 @@
+{
+  "file_name": "経営の診断書_フォーマット.xlsx",
+  "sheet_name": "４．３期比較表",
+  "unit": "千円 (thousands of yen)",
+  "analysis_date": "2025-10-26",
+  "tables": [
+    {
+      "number": "①",
+      "name": "売上高内訳表",
+      "name_en": "Sales Breakdown Table",
+      "location": {
+        "section": "Left",
+        "columns": "A-K"
+      },
+      "rows": {
+        "title_row": 3,
+        "period_header_row": 4,
+        "column_header_row": 5,
+        "data_start_row": 6,
+        "data_end_row": 8,
+        "total_row": 9
+      },
+      "data_row_count": 3,
+      "column_structure": {
+        "item_name": {
+          "column": "A",
+          "description": "項目名"
+        },
+        "前々期": {
+          "金額": {
+            "column": "B",
+            "description": "Amount (Two Periods Ago)"
+          },
+          "売上比": {
+            "column": "C",
+            "description": "Sales Ratio (%)"
+          }
+        },
+        "前期": {
+          "金額": {
+            "column": "D",
+            "description": "Amount (Previous Period)"
+          },
+          "売上比": {
+            "column": "E",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "F",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "G",
+            "description": "Year-over-Year Change"
+          }
+        },
+        "当期": {
+          "金額": {
+            "column": "H",
+            "description": "Amount (Current Period)"
+          },
+          "売上比": {
+            "column": "I",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "J",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "K",
+            "description": "Year-over-Year Change"
+          }
+        }
+      },
+      "items": [
+        {
+          "row": 6,
+          "name": "商品売上",
+          "type": "data"
+        },
+        {
+          "row": 7,
+          "name": "",
+          "type": "data",
+          "note": "Available for additional data"
+        },
+        {
+          "row": 8,
+          "name": "",
+          "type": "data",
+          "note": "Available for additional data"
+        }
+      ],
+      "total": {
+        "row": 9,
+        "name": "合計",
+        "type": "total"
+      }
+    },
+    {
+      "number": "②",
+      "name": "販売費及び一般管理費比較表",
+      "name_en": "SG&A Comparison Table",
+      "location": {
+        "section": "Right",
+        "columns": "M-W"
+      },
+      "rows": {
+        "title_row": 3,
+        "period_header_row": 4,
+        "column_header_row": 5,
+        "data_start_row": 6,
+        "data_end_row": 11,
+        "subtotal_row": 12
+      },
+      "data_row_count": 6,
+      "column_structure": {
+        "item_name": {
+          "column": "M",
+          "description": "項目名"
+        },
+        "前々期": {
+          "金額": {
+            "column": "N",
+            "description": "Amount (Two Periods Ago)"
+          },
+          "売上比": {
+            "column": "O",
+            "description": "Sales Ratio (%)"
+          }
+        },
+        "前期": {
+          "金額": {
+            "column": "P",
+            "description": "Amount (Previous Period)"
+          },
+          "売上比": {
+            "column": "Q",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "R",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "S",
+            "description": "Year-over-Year Change"
+          }
+        },
+        "当期": {
+          "金額": {
+            "column": "T",
+            "description": "Amount (Current Period)"
+          },
+          "売上比": {
+            "column": "U",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "V",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "W",
+            "description": "Year-over-Year Change"
+          }
+        }
+      },
+      "items": [
+        {
+          "row": 6,
+          "name": "役員報酬",
+          "name_en": "Executive Compensation",
+          "type": "data"
+        },
+        {
+          "row": 7,
+          "name": "給与手当",
+          "name_en": "Salaries and Allowances",
+          "type": "data"
+        },
+        {
+          "row": 8,
+          "name": "賞与",
+          "name_en": "Bonuses",
+          "type": "data"
+        },
+        {
+          "row": 9,
+          "name": "法定福利費",
+          "name_en": "Statutory Welfare Expenses",
+          "type": "data"
+        },
+        {
+          "row": 10,
+          "name": "福利厚生費",
+          "name_en": "Welfare Expenses",
+          "type": "data"
+        },
+        {
+          "row": 11,
+          "name": "退職金",
+          "name_en": "Retirement Benefits",
+          "type": "data"
+        }
+      ],
+      "subtotal": {
+        "row": 12,
+        "name": "（人件費小計）",
+        "name_en": "Personnel Costs Subtotal",
+        "type": "subtotal"
+      },
+      "note": "Additional SG&A items continue from row 13 onwards"
+    },
+    {
+      "number": "③",
+      "name": "変動費内訳比較表",
+      "name_en": "Variable Cost Breakdown Table",
+      "location": {
+        "section": "Left",
+        "columns": "A-K"
+      },
+      "rows": {
+        "title_row": "10-11 (merged)",
+        "period_header_row": 12,
+        "column_header_row": 13,
+        "data_start_row": 14,
+        "data_end_row": 19,
+        "subtotal_row": 17,
+        "total_row": 20
+      },
+      "data_row_count": 6,
+      "column_structure": {
+        "item_name": {
+          "column": "A",
+          "description": "項目名"
+        },
+        "前々期": {
+          "金額": {
+            "column": "B",
+            "description": "Amount (Two Periods Ago)"
+          },
+          "売上比": {
+            "column": "C",
+            "description": "Sales Ratio (%)"
+          }
+        },
+        "前期": {
+          "金額": {
+            "column": "D",
+            "description": "Amount (Previous Period)"
+          },
+          "売上比": {
+            "column": "E",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "F",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "G",
+            "description": "Year-over-Year Change"
+          }
+        },
+        "当期": {
+          "金額": {
+            "column": "H",
+            "description": "Amount (Current Period)"
+          },
+          "売上比": {
+            "column": "I",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "J",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "K",
+            "description": "Year-over-Year Change"
+          }
+        }
+      },
+      "items": [
+        {
+          "row": 14,
+          "name": "仕入高",
+          "name_en": "Purchases",
+          "type": "data"
+        },
+        {
+          "row": 15,
+          "name": "外注費",
+          "name_en": "Outsourcing Costs",
+          "type": "data"
+        },
+        {
+          "row": 16,
+          "name": "",
+          "type": "data",
+          "note": "Available for additional data"
+        }
+      ],
+      "subtotal": {
+        "row": 17,
+        "name": "（小計）",
+        "name_en": "Subtotal",
+        "type": "subtotal"
+      },
+      "additional_items": [
+        {
+          "row": 18,
+          "name": "期首棚卸高",
+          "name_en": "Beginning Inventory",
+          "type": "adjustment"
+        },
+        {
+          "row": 19,
+          "name": "期末棚卸高",
+          "name_en": "Ending Inventory",
+          "type": "adjustment"
+        }
+      ],
+      "total": {
+        "row": 20,
+        "name": "合計",
+        "name_en": "Total",
+        "type": "total"
+      }
+    },
+    {
+      "number": "④",
+      "name": "製造経費比較表",
+      "name_en": "Manufacturing Overhead Table",
+      "location": {
+        "section": "Left",
+        "columns": "A-K"
+      },
+      "rows": {
+        "title_row": "21-22 (merged)",
+        "period_header_row": 23,
+        "column_header_row": 24,
+        "data_start_row": 25,
+        "data_end_row": 39,
+        "subtotal_row_1": 30,
+        "subtotal_row_2": 40,
+        "total_row": 41
+      },
+      "data_row_count": 15,
+      "column_structure": {
+        "item_name": {
+          "column": "A",
+          "description": "項目名"
+        },
+        "前々期": {
+          "金額": {
+            "column": "B",
+            "description": "Amount (Two Periods Ago)"
+          },
+          "売上比": {
+            "column": "C",
+            "description": "Sales Ratio (%)"
+          }
+        },
+        "前期": {
+          "金額": {
+            "column": "D",
+            "description": "Amount (Previous Period)"
+          },
+          "売上比": {
+            "column": "E",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "F",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "G",
+            "description": "Year-over-Year Change"
+          }
+        },
+        "当期": {
+          "金額": {
+            "column": "H",
+            "description": "Amount (Current Period)"
+          },
+          "売上比": {
+            "column": "I",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "J",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "K",
+            "description": "Year-over-Year Change"
+          }
+        }
+      },
+      "sections": [
+        {
+          "name": "Labor Costs",
+          "name_jp": "労務費",
+          "rows": "25-29",
+          "subtotal_row": 30,
+          "items": [
+            {
+              "row": 25,
+              "name": "賃金給料",
+              "name_en": "Wages and Salaries"
+            },
+            {
+              "row": 26,
+              "name": "賞与",
+              "name_en": "Bonuses"
+            },
+            {
+              "row": 27,
+              "name": "法定福利費",
+              "name_en": "Statutory Welfare Expenses"
+            },
+            {
+              "row": 28,
+              "name": "福利厚生費",
+              "name_en": "Welfare Expenses"
+            }
+          ]
+        },
+        {
+          "name": "Expenses",
+          "name_jp": "経費",
+          "rows": "31-39",
+          "subtotal_row": 40,
+          "items": [
+            {
+              "row": 31,
+              "name": "減価償却費",
+              "name_en": "Depreciation"
+            },
+            {
+              "row": 39,
+              "name": "その他経費",
+              "name_en": "Other Expenses"
+            }
+          ]
+        }
+      ],
+      "subtotal_1": {
+        "row": 30,
+        "name": "（労務費計）",
+        "name_en": "Labor Costs Subtotal",
+        "type": "subtotal"
+      },
+      "subtotal_2": {
+        "row": 40,
+        "name": "（経費計）",
+        "name_en": "Expenses Subtotal",
+        "type": "subtotal"
+      },
+      "total": {
+        "row": 41,
+        "name": "合計",
+        "name_en": "Total",
+        "type": "total"
+      }
+    },
+    {
+      "number": "⑤",
+      "name": "その他損益比較表",
+      "name_en": "Other P&L Comparison Table",
+      "location": {
+        "section": "Right",
+        "columns": "M-W"
+      },
+      "rows": {
+        "title_row": "31-32 (merged)",
+        "period_header_row": 33,
+        "column_header_row": 34,
+        "data_start_row": 35,
+        "data_end_row": 44,
+        "total_row": 44
+      },
+      "data_row_count": 10,
+      "column_structure": {
+        "item_name": {
+          "column": "M",
+          "description": "項目名"
+        },
+        "前々期": {
+          "金額": {
+            "column": "N",
+            "description": "Amount (Two Periods Ago)"
+          },
+          "売上比": {
+            "column": "O",
+            "description": "Sales Ratio (%)"
+          }
+        },
+        "前期": {
+          "金額": {
+            "column": "P",
+            "description": "Amount (Previous Period)"
+          },
+          "売上比": {
+            "column": "Q",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "R",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "S",
+            "description": "Year-over-Year Change"
+          }
+        },
+        "当期": {
+          "金額": {
+            "column": "T",
+            "description": "Amount (Current Period)"
+          },
+          "売上比": {
+            "column": "U",
+            "description": "Sales Ratio (%)"
+          },
+          "前年比": {
+            "column": "V",
+            "description": "Year-over-Year Ratio (%)"
+          },
+          "対年変更": {
+            "column": "W",
+            "description": "Year-over-Year Change"
+          }
+        }
+      },
+      "items": [
+        {
+          "row": 35,
+          "name": "売上総利益",
+          "name_en": "Gross Profit",
+          "type": "calculated"
+        },
+        {
+          "row": 36,
+          "name": "営業利益",
+          "name_en": "Operating Profit",
+          "type": "calculated"
+        },
+        {
+          "row": 37,
+          "name": "営業外収益",
+          "name_en": "Non-Operating Income",
+          "type": "data"
+        },
+        {
+          "row": 38,
+          "name": "営業外費用",
+          "name_en": "Non-Operating Expenses",
+          "type": "data"
+        },
+        {
+          "row": 39,
+          "name": "経常利益",
+          "name_en": "Ordinary Profit",
+          "type": "calculated"
+        },
+        {
+          "row": 40,
+          "name": "特別利益",
+          "name_en": "Extraordinary Income",
+          "type": "data"
+        },
+        {
+          "row": 41,
+          "name": "特別損失",
+          "name_en": "Extraordinary Losses",
+          "type": "data"
+        },
+        {
+          "row": 42,
+          "name": "税引前利益",
+          "name_en": "Profit Before Tax",
+          "type": "calculated"
+        },
+        {
+          "row": 43,
+          "name": "法人税等",
+          "name_en": "Corporate Tax",
+          "type": "data"
+        },
+        {
+          "row": 44,
+          "name": "当期純利益",
+          "name_en": "Net Profit",
+          "type": "total"
+        }
+      ],
+      "total": {
+        "row": 44,
+        "name": "当期純利益",
+        "name_en": "Net Profit",
+        "type": "total"
+      }
+    }
+  ],
+  "column_mappings": {
+    "standard_layout": {
+      "description": "Used by Tables ①, ③, ④",
+      "columns": "A-K",
+      "structure": {
+        "A": "Item Name",
+        "B": "前々期 金額",
+        "C": "前々期 売上比",
+        "D": "前期 金額",
+        "E": "前期 売上比",
+        "F": "前期 前年比",
+        "G": "前期 対年変更",
+        "H": "当期 金額",
+        "I": "当期 売上比",
+        "J": "当期 前年比",
+        "K": "当期 対年変更"
+      }
+    },
+    "extended_layout": {
+      "description": "Used by Tables ②, ⑤",
+      "columns": "M-W",
+      "structure": {
+        "M": "Item Name",
+        "N": "前々期 金額",
+        "O": "前々期 売上比",
+        "P": "前期 金額",
+        "Q": "前期 売上比",
+        "R": "前期 前年比",
+        "S": "前期 対年変更",
+        "T": "当期 金額",
+        "U": "当期 売上比",
+        "V": "当期 前年比",
+        "W": "当期 対年変更"
+      }
+    }
+  }
+}
