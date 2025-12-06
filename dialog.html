@@ -170,9 +170,15 @@
         document.getElementById('error').style.display = 'none';
 
         google.script.run
-          .withSuccessHandler(function() { google.script.host.close(); })
+          .withSuccessHandler(showSuccess)
           .withFailureHandler(showError)
           .setMultipleFilesAndExtract(current, previous, ago2);
+      }
+      
+      function showSuccess(result) {
+        // ダイアログを閉じる前に完了メッセージを表示（クライアントサイドで）
+        alert(result.message);
+        google.script.host.close();
       }
 
       function showError(msg) {

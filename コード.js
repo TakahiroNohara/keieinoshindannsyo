@@ -322,8 +322,7 @@ function startStep1_showFileDialog() {
 function setFileIdAndExtract(fileId) {
   const file = DriveApp.getFileById(fileId);
   if (!file) {
-    SpreadsheetApp.getUi().alert('ファイルが見つかりませんでした。');
-    return;
+    throw new Error('ファイルが見つかりませんでした。');
   }
   
   try {
@@ -341,13 +340,16 @@ function setFileIdAndExtract(fileId) {
       });
       
       writeToInputSheet(stackedData);
-      SpreadsheetApp.getUi().alert(`OCR完了。\n「${SHEETS.INPUT}」シートにデータを貼り付けました。\n\nメニューの「1. OCRデータ読込・初期分類」を実行してください。`);
+      return {
+        success: true,
+        message: `OCR完了。\n「${SHEETS.INPUT}」シートにデータを貼り付けました。\n\nメニューの「1. OCRデータ読込・初期分類」を実行してください。`
+      };
     } else {
-      SpreadsheetApp.getUi().alert('有効なデータを抽出できませんでした。');
+      throw new Error('有効なデータを抽出できませんでした。');
     }
   } catch (e) {
     Logger.log(e);
-    SpreadsheetApp.getUi().alert('エラーが発生しました: ' + e.message);
+    throw new Error('処理エラー: ' + e.message);
   }
 }
 
@@ -361,8 +363,7 @@ function setMultipleFilesAndExtract(fileCurrentId, filePreviousId, file2PeriodsA
     const file2PeriodsAgo = DriveApp.getFileById(file2PeriodsAgoId);
 
     if (!fileCurrent || !filePrevious || !file2PeriodsAgo) {
-      SpreadsheetApp.getUi().alert('いずれかのファイルが見つかりませんでした。');
-      return;
+      throw new Error('いずれかのファイルが見つかりませんでした。');
     }
 
     const stackedData = [];
@@ -384,14 +385,17 @@ function setMultipleFilesAndExtract(fileCurrentId, filePreviousId, file2PeriodsA
 
     if (stackedData.length > 0) {
       writeToInputSheet(stackedData);
-      SpreadsheetApp.getUi().alert(`3期分のOCR完了。\n「${SHEETS.INPUT}」シートに${stackedData.length}件のデータを貼り付けました。\n\nメニューの「1. OCRデータ読込・初期分類」を実行してください。`);
+      return {
+        success: true,
+        message: `3期分のOCR完了。\n「${SHEETS.INPUT}」シートに${stackedData.length}件のデータを貼り付けました。\n\nメニューの「1. OCRデータ読込・初期分類」を実行してください。`
+      };
     } else {
-      SpreadsheetApp.getUi().alert('有効なデータを抽出できませんでした。');
+      throw new Error('有効なデータを抽出できませんでした。');
     }
 
   } catch (e) {
     Logger.log(e);
-    SpreadsheetApp.getUi().alert('エラーが発生しました: ' + e.message);
+    throw new Error('処理エラー: ' + e.message);
   }
 }
 
