@@ -454,10 +454,19 @@ function callGeminiApiSinglePeriod(file, label) {
   return callWithRetry(() => {
     const API_KEY = getApiKey();
     const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + API_KEY;
-    const prompt = `このファイルから貸借対照表、損益計算書、製造原価報告書、販管費内訳書のすべての勘定科目と金額を抽出してください。
-出力形式: CSV
-列順序: 勘定科目, 金額
-金額は数値のみ。`;
+    const prompt = `あなたは決算書OCRエンジンです。
+提供されたPDF（貸借対照表、損益計算書、製造原価報告書、販管費内訳書）から、勘定科目と金額をすべて抽出してください。
+
+【出力ルール】
+1. 出力はCSV形式のみ。「\`\`\`csv」などのMarkdownタグや、挨拶文、説明は一切不要。
+2. 1行に「勘定科目,金額」の形式で出力。
+3. 金額は半角数字のみ（カンマ「,」や円マーク「¥」は削除）。マイナスは「-」または「▲」。
+4. 貸借対照表、損益計算書などの主要な表の項目はすべて網羅すること。
+
+例:
+現金及び預金,12345000
+売上高,98765000
+...`;
 
     const requestBody = {
       "contents": [{"parts": [{ "text": prompt }, { "inline_data": { "mime_type": file.getMimeType(), "data": Utilities.base64Encode(file.getBlob().getBytes()) } }] }],
@@ -467,53 +476,50 @@ function callGeminiApiSinglePeriod(file, label) {
     const response = UrlFetchApp.fetch(API_ENDPOINT, options);
     if (response.getResponseCode() === 200) {
       const json = JSON.parse(response.getContentText());
-      return json.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      Logger.log(`[OCR Debug] ${label} Response (First 100 chars): ${text.substring(0, 100)}...`);
+      return text;
     }
     throw new Error(`API Error (${label}): ${response.getResponseCode()}`);
   }, 3, 1000);
 }
 
-function callWithRetry(func, maxRetries, delay) {
-  for (let i = 0; i < maxRetries; i++) {
-    try { return func(); } catch (e) {
-      if (i === maxRetries - 1) throw e;
-      Utilities.sleep(delay);
-    }
-  }
-}
-
-function parseItemValueCsvResult(text) {
-  // 4列 (項目, 2ago, prev, curr)
-  const lines = text.replace(/```csv|```/g, '').trim().split('\n');
-  const results = [];
-  for (const line of lines) {
-    const parts = line.split(',');
-    if (parts.length >= 4) {
-      const item = normalizeJapaneseText(parts[0]);
-      if (!isSafeText(item)) continue;
-      results.push([
-        item,
-        parseJapaneseNumber(parts[1]),
-        parseJapaneseNumber(parts[2]),
-        parseJapaneseNumber(parts[3])
-      ]);
-    }
-  }
-  return results;
-}
-
 function parseSinglePeriodCsvResult(text) {
-  // 2列 (項目, 金額)
-  const lines = text.replace(/```csv|```/g, '').trim().split('\n');
+  if (!text) return [];
+  
+  // Markdownコードブロックの削除と行分割
+  const cleanText = text.replace(/```csv/gi, '').replace(/```/g, '').trim();
+  const lines = cleanText.split('\n');
   const results = [];
+  
   for (const line of lines) {
-    const parts = line.split(',');
-    if (parts.length >= 2) {
-      const item = normalizeJapaneseText(parts[0]);
+    // カンマで分割（金額にカンマが含まれている可能性も考慮し、最後のカンマで区切る等の工夫も考えられるが、
+    // プロンプトでカンマ削除を指示しているので標準的なsplitで対応）
+    // ただし、行末のカンマや空行には注意
+    if (!line.trim()) continue;
+
+    // 最後のカンマで分割して「科目」と「金額」に分ける（科目にカンマが入るケースへの安全策）
+    const lastCommaIndex = line.lastIndexOf(',');
+    if (lastCommaIndex === -1) continue; // カンマがない行はスキップ
+
+    const itemPart = line.substring(0, lastCommaIndex).trim();
+    const amountPart = line.substring(lastCommaIndex + 1).trim();
+
+    if (itemPart && amountPart) {
+      const item = normalizeJapaneseText(itemPart);
+      // ヘッダー行っぽいものはスキップ（"勘定科目" や "金額" という文字そのもの）
+      if (item === '勘定科目' || item === '科目' || item === '金額') continue;
       if (!isSafeText(item)) continue;
-      results.push([item, parseJapaneseNumber(parts[1])]);
+
+      const amount = parseJapaneseNumber(amountPart);
+      // 金額が0の場合は、パース失敗の可能性もあるが、本当に0円の可能性もあるため採用する
+      // ただし、金額部分が明らかに数値でない文字列だった場合は parseJapaneseNumber が 0 を返す仕様なので
+      // ここではそのまま採用。
+      
+      results.push([item, amount]);
     }
   }
+  Logger.log(`[OCR Debug] Parsed ${results.length} items from text.`);
   return results;
 }
 
