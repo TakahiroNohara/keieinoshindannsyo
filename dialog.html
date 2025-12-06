@@ -14,12 +14,13 @@
       button.action:disabled { background-color: #ccc; cursor: default; }
       .loading { color: #666; font-style: italic; display: none; margin-top: 5px; }
       hr { border: 0; border-top: 1px solid #eee; margin: 20px 0; }
+      .period-label { font-weight: bold; color: #202124; display: block; margin-top: 10px;}
     </style>
   </head>
   <body>
     <!-- ステップ1: フォルダ選択 -->
     <div class="form-group">
-      <label for="folder-select" style="font-weight:bold;">1. フォルダを選択</label>
+      <label for="folder-select" style="font-weight:bold; font-size: 1.1em;">1. 決算書が保存されているフォルダを選択</label>
       <div class="secondary">直近使用したフォルダから選択してください</div>
       
       <select id="folder-select" onchange="loadFiles()">
@@ -28,24 +29,33 @@
       <div id="folder-loading" class="loading" style="display:block;">フォルダ一覧を取得中...</div>
     </div>
 
-    <!-- ステップ2: ファイル選択 -->
+    <hr>
+
+    <!-- ステップ2: ファイル選択（3期分） -->
     <div class="form-group">
-      <label for="file-select" style="font-weight:bold;">2. PDFファイルを選択</label>
-      <select id="file-select" onchange="updateManualInput()" disabled>
+      <label style="font-weight:bold; font-size: 1.1em;">2. 3期分のファイルを選択</label>
+      <div class="secondary">同じフォルダ内のPDFから選択します</div>
+
+      <label class="period-label">① 当期（最新）の決算書</label>
+      <select id="file-current" disabled>
         <option value="" selected>← 先にフォルダを選択してください</option>
       </select>
+
+      <label class="period-label">② 前期の決算書</label>
+      <select id="file-previous" disabled>
+        <option value="" selected>← 先にフォルダを選択してください</option>
+      </select>
+
+      <label class="period-label">③ 前々期の決算書</label>
+      <select id="file-2ago" disabled>
+        <option value="" selected>← 先にフォルダを選択してください</option>
+      </select>
+      
       <div id="file-loading" class="loading">ファイル一覧を取得中...</div>
     </div>
 
     <div class="form-group">
-      <button id="submit-btn" class="action" onclick="runExtract()" disabled>OCR抽出を開始</button>
-    </div>
-
-    <hr>
-
-    <div class="form-group" style="margin-bottom: 0;">
-      <label for="fileId" class="secondary">ファイルIDを直接入力（見つからない場合）:</label>
-      <input type="text" id="fileId" placeholder="Google DriveのファイルID" oninput="checkInput()">
+      <button id="submit-btn" class="action" onclick="runExtract()" disabled>3期分のOCR抽出を開始</button>
     </div>
 
     <div id="error" class="error"></div>
@@ -84,9 +94,14 @@
         var folderId = folderSelect.value;
         if (!folderId) return;
 
-        var fileSelect = document.getElementById('file-select');
-        fileSelect.disabled = true;
-        fileSelect.innerHTML = '<option>読み込み中...</option>';
+        // 3つのセレクトボックスをリセット
+        var ids = ['file-current', 'file-previous', 'file-2ago'];
+        ids.forEach(function(id) {
+            var el = document.getElementById(id);
+            el.disabled = true;
+            el.innerHTML = '<option>読み込み中...</option>';
+        });
+        
         document.getElementById('file-loading').style.display = 'block';
         document.getElementById('submit-btn').disabled = true;
 
@@ -97,51 +112,56 @@
       }
 
       function populateFileList(files) {
-        var select = document.getElementById('file-select');
         document.getElementById('file-loading').style.display = 'none';
-        select.innerHTML = ''; // クリア
-        select.disabled = false;
+        var ids = ['file-current', 'file-previous', 'file-2ago'];
         
-        if (files.length === 0) {
-          var option = document.createElement('option');
-          option.text = 'このフォルダにPDFはありません';
-          select.add(option);
-          return;
-        }
+        ids.forEach(function(id) {
+            var select = document.getElementById(id);
+            select.innerHTML = ''; // クリア
+            select.disabled = false;
+            
+            if (files.length === 0) {
+              var option = document.createElement('option');
+              option.text = 'このフォルダにPDFはありません';
+              select.add(option);
+            } else {
+              var defaultOption = document.createElement('option');
+              defaultOption.text = '-- ファイルを選択してください --';
+              defaultOption.value = '';
+              defaultOption.selected = true;
+              defaultOption.disabled = true;
+              select.add(defaultOption);
 
-        var defaultOption = document.createElement('option');
-        defaultOption.text = '-- ファイルを選択してください --';
-        defaultOption.value = '';
-        defaultOption.selected = true;
-        defaultOption.disabled = true;
-        select.add(defaultOption);
-
-        files.forEach(function(file) {
-          var option = document.createElement('option');
-          option.value = file.id;
-          option.text = file.name + ' (' + file.date + ')';
-          select.add(option);
+              files.forEach(function(file) {
+                var option = document.createElement('option');
+                option.value = file.id;
+                option.text = file.name + ' (' + file.date + ')';
+                select.add(option);
+              });
+            }
+            
+            // 変更時にバリデーションを行うイベントリスナー
+            select.onchange = validateForm;
         });
       }
 
-      function updateManualInput() {
-        var select = document.getElementById('file-select');
-        var input = document.getElementById('fileId');
-        if (select.value) {
-          input.value = select.value;
-          document.getElementById('submit-btn').disabled = false;
-        }
-      }
-      
-      function checkInput() {
-        var input = document.getElementById('fileId');
-        document.getElementById('submit-btn').disabled = !input.value;
+      function validateForm() {
+          var current = document.getElementById('file-current').value;
+          var previous = document.getElementById('file-previous').value;
+          var ago2 = document.getElementById('file-2ago').value;
+          
+          // 3つとも選択されている場合のみボタンを有効化
+          var isValid = current && previous && ago2;
+          document.getElementById('submit-btn').disabled = !isValid;
       }
 
       function runExtract() {
-        var id = document.getElementById('fileId').value;
-        if(!id) {
-          showError('ファイルを選択するか、IDを入力してください');
+        var current = document.getElementById('file-current').value;
+        var previous = document.getElementById('file-previous').value;
+        var ago2 = document.getElementById('file-2ago').value;
+
+        if(!current || !previous || !ago2) {
+          showError('すべてのファイルを選択してください');
           return;
         }
         
@@ -152,7 +172,7 @@
         google.script.run
           .withSuccessHandler(function() { google.script.host.close(); })
           .withFailureHandler(showError)
-          .setFileIdAndExtract(id);
+          .setMultipleFilesAndExtract(current, previous, ago2);
       }
 
       function showError(msg) {
@@ -161,7 +181,7 @@
         errDiv.style.display = 'block';
         
         document.getElementById('submit-btn').disabled = false;
-        document.getElementById('submit-btn').innerText = 'OCR抽出を開始';
+        document.getElementById('submit-btn').innerText = '3期分のOCR抽出を開始';
         document.getElementById('folder-loading').style.display = 'none';
         document.getElementById('file-loading').style.display = 'none';
       }
