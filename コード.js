@@ -1436,15 +1436,69 @@ function getFolders() {
   return folderList;
 }
 
+/**
+ * 直近使用されたフォルダを取得する（ダイアログ用）
+ * @return {Array<Object>} フォルダ情報の配列
+ */
+function getRecentFolders() {
+  // 直近更新されたフォルダを取得
+  const folders = DriveApp.searchFolders('trashed=false');
+  const folderList = [];
+  let count = 0;
+  
+  // 最大50件取得してソート
+  while (folders.hasNext() && count < 50) {
+    const folder = folders.next();
+    folderList.push({
+      id: folder.getId(),
+      name: folder.getName(),
+      lastUpdated: folder.getLastUpdated().getTime()
+    });
+    count++;
+  }
+  
+  // 更新日時で降順ソート
+  folderList.sort((a, b) => b.lastUpdated - a.lastUpdated);
+  
+  // ルートフォルダを先頭に追加
+  const rootFolder = DriveApp.getRootFolder();
+  const result = [{
+    id: rootFolder.getId(),
+    name: 'マイドライブ (ルート)',
+    date: '-'
+  }];
+
+  // 上位20件を追加
+  folderList.slice(0, 20).forEach(f => {
+    result.push({
+      id: f.id,
+      name: f.name,
+      date: new Date(f.lastUpdated).toLocaleDateString()
+    });
+  });
+
+  return result;
+}
+
 function getPDFFilesInFolder(folderId) {
   try {
     const folder = DriveApp.getFolderById(folderId);
-    const files = folder.searchFiles('mimeType="application/pdf"');
+    const files = folder.searchFiles('mimeType="application/pdf" and trashed=false');
     const fileList = [];
+    
     while (files.hasNext()) {
       let file = files.next();
-      fileList.push({ name: file.getName(), id: file.getId() });
+      fileList.push({ 
+        name: file.getName(), 
+        id: file.getId(),
+        date: file.getLastUpdated().toLocaleDateString() + ' ' + file.getLastUpdated().toLocaleTimeString(),
+        lastUpdated: file.getLastUpdated().getTime()
+      });
     }
+    
+    // 更新日時順にソート
+    fileList.sort((a, b) => b.lastUpdated - a.lastUpdated);
+    
     return fileList;
   } catch (e) {
     Logger.log(`エラー: PDFファイル検索に失敗しました: ${e.message}`);
@@ -1453,37 +1507,9 @@ function getPDFFilesInFolder(folderId) {
 }
 
 /**
- * 直近のPDFファイルを取得する（ダイアログ用）
- * @return {Array<Object>} ファイル情報の配列
+ * 直近のPDFファイルを取得する（旧関数・互換性のため残すか削除）
+ * 今回はgetRecentFoldersに置き換えるため削除し、上記2関数を使用します。
  */
-function getRecentPdfFiles() {
-  // 直近更新されたPDFを取得
-  // 注意: searchFilesは順序保証がないため、多めに取得してソートする
-  const files = DriveApp.searchFiles('mimeType="application/pdf" and trashed=false');
-  const fileList = [];
-  let count = 0;
-  
-  // 最大50件取得してソート
-  while (files.hasNext() && count < 50) {
-    const file = files.next();
-    fileList.push({
-      id: file.getId(),
-      name: file.getName(),
-      lastUpdated: file.getLastUpdated().getTime()
-    });
-    count++;
-  }
-  
-  // 更新日時で降順ソート（新しい順）
-  fileList.sort((a, b) => b.lastUpdated - a.lastUpdated);
-  
-  // 上位20件を返す
-  return fileList.slice(0, 20).map(f => ({
-    id: f.id,
-    name: f.name,
-    date: new Date(f.lastUpdated).toLocaleDateString() + ' ' + new Date(f.lastUpdated).toLocaleTimeString()
-  }));
-}
 
 function getOrCreateSheet(sheetName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();

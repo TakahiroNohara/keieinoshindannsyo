@@ -10,56 +10,105 @@
       .error { color: #d93025; margin-top: 10px; padding: 10px; background-color: #fce8e6; border: 1px solid #d93025; display: none; }
       select { width: 100%; padding: 8px; margin-top: 5px; }
       input[type="text"] { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
-      button.action { background-color: #4285f4; color: white; border: none; padding: 10px 20px; font-weight: bold; border-radius: 4px; cursor: pointer; }
+      button.action { background-color: #4285f4; color: white; border: none; padding: 10px 20px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%; }
       button.action:disabled { background-color: #ccc; cursor: default; }
-      .loading { color: #666; font-style: italic; }
+      .loading { color: #666; font-style: italic; display: none; margin-top: 5px; }
+      hr { border: 0; border-top: 1px solid #eee; margin: 20px 0; }
     </style>
   </head>
   <body>
+    <!-- ステップ1: フォルダ選択 -->
     <div class="form-group">
-      <label for="file-select" style="font-weight:bold;">処理する決算書PDFを選択</label>
-      <div class="secondary">直近更新された20件のPDFを表示しています</div>
+      <label for="folder-select" style="font-weight:bold;">1. フォルダを選択</label>
+      <div class="secondary">直近使用したフォルダから選択してください</div>
       
-      <select id="file-select" onchange="updateManualInput()">
+      <select id="folder-select" onchange="loadFiles()">
         <option value="" disabled selected>読み込み中...</option>
       </select>
-      <div id="loading-msg" class="loading">ファイル一覧を取得中...</div>
+      <div id="folder-loading" class="loading" style="display:block;">フォルダ一覧を取得中...</div>
     </div>
 
+    <!-- ステップ2: ファイル選択 -->
     <div class="form-group">
-      <label for="fileId">またはファイルIDを直接入力:</label>
-      <input type="text" id="fileId" placeholder="Google DriveのファイルID">
+      <label for="file-select" style="font-weight:bold;">2. PDFファイルを選択</label>
+      <select id="file-select" onchange="updateManualInput()" disabled>
+        <option value="" selected>← 先にフォルダを選択してください</option>
+      </select>
+      <div id="file-loading" class="loading">ファイル一覧を取得中...</div>
     </div>
 
     <div class="form-group">
       <button id="submit-btn" class="action" onclick="runExtract()" disabled>OCR抽出を開始</button>
     </div>
 
+    <hr>
+
+    <div class="form-group" style="margin-bottom: 0;">
+      <label for="fileId" class="secondary">ファイルIDを直接入力（見つからない場合）:</label>
+      <input type="text" id="fileId" placeholder="Google DriveのファイルID" oninput="checkInput()">
+    </div>
+
     <div id="error" class="error"></div>
 
     <script>
-      // 初期化：ファイル一覧を取得
+      // 初期化：フォルダ一覧を取得
       window.onload = function() {
+        google.script.run
+          .withSuccessHandler(populateFolderList)
+          .withFailureHandler(showError)
+          .getRecentFolders();
+      };
+
+      function populateFolderList(folders) {
+        var select = document.getElementById('folder-select');
+        document.getElementById('folder-loading').style.display = 'none';
+        select.innerHTML = ''; // クリア
+        
+        var defaultOption = document.createElement('option');
+        defaultOption.text = '-- フォルダを選択してください --';
+        defaultOption.value = '';
+        defaultOption.selected = true;
+        defaultOption.disabled = true;
+        select.add(defaultOption);
+
+        folders.forEach(function(folder) {
+          var option = document.createElement('option');
+          option.value = folder.id;
+          option.text = folder.name + (folder.date !== '-' ? ' (' + folder.date + ')' : '');
+          select.add(option);
+        });
+      }
+
+      function loadFiles() {
+        var folderSelect = document.getElementById('folder-select');
+        var folderId = folderSelect.value;
+        if (!folderId) return;
+
+        var fileSelect = document.getElementById('file-select');
+        fileSelect.disabled = true;
+        fileSelect.innerHTML = '<option>読み込み中...</option>';
+        document.getElementById('file-loading').style.display = 'block';
+        document.getElementById('submit-btn').disabled = true;
+
         google.script.run
           .withSuccessHandler(populateFileList)
           .withFailureHandler(showError)
-          .getRecentPdfFiles();
-      };
+          .getPDFFilesInFolder(folderId);
+      }
 
       function populateFileList(files) {
         var select = document.getElementById('file-select');
-        document.getElementById('loading-msg').style.display = 'none';
-        
+        document.getElementById('file-loading').style.display = 'none';
         select.innerHTML = ''; // クリア
+        select.disabled = false;
         
         if (files.length === 0) {
           var option = document.createElement('option');
-          option.text = 'PDFファイルが見つかりませんでした';
+          option.text = 'このフォルダにPDFはありません';
           select.add(option);
           return;
         }
 
-        // プレースホルダー
         var defaultOption = document.createElement('option');
         defaultOption.text = '-- ファイルを選択してください --';
         defaultOption.value = '';
@@ -73,8 +122,6 @@
           option.text = file.name + ' (' + file.date + ')';
           select.add(option);
         });
-        
-        document.getElementById('submit-btn').disabled = false;
       }
 
       function updateManualInput() {
@@ -82,7 +129,13 @@
         var input = document.getElementById('fileId');
         if (select.value) {
           input.value = select.value;
+          document.getElementById('submit-btn').disabled = false;
         }
+      }
+      
+      function checkInput() {
+        var input = document.getElementById('fileId');
+        document.getElementById('submit-btn').disabled = !input.value;
       }
 
       function runExtract() {
@@ -107,9 +160,10 @@
         errDiv.innerText = 'エラー: ' + msg;
         errDiv.style.display = 'block';
         
-        // ボタンを復帰
         document.getElementById('submit-btn').disabled = false;
         document.getElementById('submit-btn').innerText = 'OCR抽出を開始';
+        document.getElementById('folder-loading').style.display = 'none';
+        document.getElementById('file-loading').style.display = 'none';
       }
     </script>
   </body>
