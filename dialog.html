@@ -4,69 +4,112 @@
     <base target="_top">
     <link rel="stylesheet" href="https://ssl.gstatic.com/docs/script/css/add-ons1.css">
     <style>
-      body { padding: 10px; font-family: sans-serif; }
-      .form-group { margin-bottom: 15px; }
+      body { padding: 15px; font-family: sans-serif; font-size: 14px; }
+      .form-group { margin-bottom: 20px; }
       .secondary { color: #666; font-size: 0.9em; margin-top: 5px; }
-      .error { color: #d93025; margin-top: 5px; display: none; }
+      .error { color: #d93025; margin-top: 10px; padding: 10px; background-color: #fce8e6; border: 1px solid #d93025; display: none; }
+      select { width: 100%; padding: 8px; margin-top: 5px; }
+      input[type="text"] { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
+      button.action { background-color: #4285f4; color: white; border: none; padding: 10px 20px; font-weight: bold; border-radius: 4px; cursor: pointer; }
+      button.action:disabled { background-color: #ccc; cursor: default; }
+      .loading { color: #666; font-style: italic; }
     </style>
   </head>
   <body>
     <div class="form-group">
-      <label for="file-input" style="font-weight:bold;">決算書PDFを選択してください</label>
-      <div class="secondary">Googleドライブ内のPDFファイルを検索・選択します。</div>
-      <br>
-      <button class="action" onclick="selectFile()">ドライブからファイルを選択</button>
+      <label for="file-select" style="font-weight:bold;">処理する決算書PDFを選択</label>
+      <div class="secondary">直近更新された20件のPDFを表示しています</div>
+      
+      <select id="file-select" onchange="updateManualInput()">
+        <option value="" disabled selected>読み込み中...</option>
+      </select>
+      <div id="loading-msg" class="loading">ファイル一覧を取得中...</div>
     </div>
 
-    <div id="status"></div>
+    <div class="form-group">
+      <label for="fileId">またはファイルIDを直接入力:</label>
+      <input type="text" id="fileId" placeholder="Google DriveのファイルID">
+    </div>
+
+    <div class="form-group">
+      <button id="submit-btn" class="action" onclick="runExtract()" disabled>OCR抽出を開始</button>
+    </div>
+
     <div id="error" class="error"></div>
 
-    <!-- Picker API -->
-    <script type="text/javascript">
-      var developerKey = ''; // Picker API Key (optional but recommended for public apps)
-      var token = ''; 
-
-      // Pickerを起動するためのアクセストークンを取得
-      function selectFile() {
-        google.script.run.withSuccessHandler(createPicker).withFailureHandler(showError).getOAuthToken();
-      }
-      
-      function getOAuthToken() {
-        // サーバーサイドで ScriptApp.getOAuthToken() を呼ぶためのラッパー
-        // ※今回は簡易的に実装するため、Picker APIを使わずにダイアログ入力を促すか、
-        // または単純にサーバーサイドでファイルIDを入力させる方式が確実ですが、
-        // ここではGoogle Picker APIを使わず、簡易的なUIとして実装します。
-        // (Picker APIはGCP設定が必要なため、今回はドライブ内のファイル一覧を表示して選択させる簡易方式にはできないため、
-        //  「ファイルID」を入力させるか、直近のPDFをリストアップする方式が安全です。
-        //  既存のコードは `setFileIdAndExtract(fileId)` を呼んでいるため、
-        //  ファイルIDを入力させるフォームにします。)
-      }
-
-      function showError(msg) {
-        document.getElementById('error').innerText = 'エラー: ' + msg;
-        document.getElementById('error').style.display = 'block';
-      }
-    </script>
-    
-    <!-- 簡易版: ファイルID入力フォーム (Picker設定が不要で確実) -->
-    <div style="margin-top: 20px; border-top: 1px solid #ccc; padding-top: 20px;">
-      <label for="fileId">ファイルIDを直接入力（上級者向け）:</label>
-      <input type="text" id="fileId" style="width: 100%; margin-top: 5px;" placeholder="1zKKfcGz...">
-      <br><br>
-      <button class="create" onclick="runExtract()">抽出開始</button>
-    </div>
-
     <script>
+      // 初期化：ファイル一覧を取得
+      window.onload = function() {
+        google.script.run
+          .withSuccessHandler(populateFileList)
+          .withFailureHandler(showError)
+          .getRecentPdfFiles();
+      };
+
+      function populateFileList(files) {
+        var select = document.getElementById('file-select');
+        document.getElementById('loading-msg').style.display = 'none';
+        
+        select.innerHTML = ''; // クリア
+        
+        if (files.length === 0) {
+          var option = document.createElement('option');
+          option.text = 'PDFファイルが見つかりませんでした';
+          select.add(option);
+          return;
+        }
+
+        // プレースホルダー
+        var defaultOption = document.createElement('option');
+        defaultOption.text = '-- ファイルを選択してください --';
+        defaultOption.value = '';
+        defaultOption.selected = true;
+        defaultOption.disabled = true;
+        select.add(defaultOption);
+
+        files.forEach(function(file) {
+          var option = document.createElement('option');
+          option.value = file.id;
+          option.text = file.name + ' (' + file.date + ')';
+          select.add(option);
+        });
+        
+        document.getElementById('submit-btn').disabled = false;
+      }
+
+      function updateManualInput() {
+        var select = document.getElementById('file-select');
+        var input = document.getElementById('fileId');
+        if (select.value) {
+          input.value = select.value;
+        }
+      }
+
       function runExtract() {
         var id = document.getElementById('fileId').value;
         if(!id) {
-          showError('ファイルIDを入力してください');
+          showError('ファイルを選択するか、IDを入力してください');
           return;
         }
+        
+        document.getElementById('submit-btn').disabled = true;
+        document.getElementById('submit-btn').innerText = '処理を開始中...';
+        document.getElementById('error').style.display = 'none';
+
         google.script.run
           .withSuccessHandler(function() { google.script.host.close(); })
           .withFailureHandler(showError)
           .setFileIdAndExtract(id);
+      }
+
+      function showError(msg) {
+        var errDiv = document.getElementById('error');
+        errDiv.innerText = 'エラー: ' + msg;
+        errDiv.style.display = 'block';
+        
+        // ボタンを復帰
+        document.getElementById('submit-btn').disabled = false;
+        document.getElementById('submit-btn').innerText = 'OCR抽出を開始';
       }
     </script>
   </body>

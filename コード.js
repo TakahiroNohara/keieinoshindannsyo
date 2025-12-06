@@ -1452,6 +1452,39 @@ function getPDFFilesInFolder(folderId) {
   }
 }
 
+/**
+ * 直近のPDFファイルを取得する（ダイアログ用）
+ * @return {Array<Object>} ファイル情報の配列
+ */
+function getRecentPdfFiles() {
+  // 直近更新されたPDFを取得
+  // 注意: searchFilesは順序保証がないため、多めに取得してソートする
+  const files = DriveApp.searchFiles('mimeType="application/pdf" and trashed=false');
+  const fileList = [];
+  let count = 0;
+  
+  // 最大50件取得してソート
+  while (files.hasNext() && count < 50) {
+    const file = files.next();
+    fileList.push({
+      id: file.getId(),
+      name: file.getName(),
+      lastUpdated: file.getLastUpdated().getTime()
+    });
+    count++;
+  }
+  
+  // 更新日時で降順ソート（新しい順）
+  fileList.sort((a, b) => b.lastUpdated - a.lastUpdated);
+  
+  // 上位20件を返す
+  return fileList.slice(0, 20).map(f => ({
+    id: f.id,
+    name: f.name,
+    date: new Date(f.lastUpdated).toLocaleDateString() + ' ' + new Date(f.lastUpdated).toLocaleTimeString()
+  }));
+}
+
 function getOrCreateSheet(sheetName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(sheetName);
