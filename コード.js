@@ -458,7 +458,7 @@ function callGeminiApiSinglePeriod(file, label) {
 提供されたPDF（貸借対照表、損益計算書、製造原価報告書、販管費内訳書）から、勘定科目と金額をすべて抽出してください。
 
 【出力ルール】
-1. 出力はCSV形式のみ。「\`\`\`csv」などのMarkdownタグや、挨拶文、説明は一切不要。
+1. 出力はCSV形式のみ。「` + "```" + `csv」などのMarkdownタグや、挨拶文、説明は一切不要。
 2. 1行に「勘定科目,金額」の形式で出力。
 3. 金額は半角数字のみ（カンマ「,」や円マーク「¥」は削除）。マイナスは「-」または「▲」。
 4. 貸借対照表、損益計算書などの主要な表の項目はすべて網羅すること。
@@ -488,7 +488,8 @@ function parseSinglePeriodCsvResult(text) {
   if (!text) return [];
   
   // Markdownコードブロックの削除と行分割
-  const cleanText = text.replace(/```csv/gi, '').replace(/```/g, '').trim();
+  // ` `` ` の文字列を直接指定
+  const cleanText = text.replace("```csv", '').replace("```", '').trim();
   const lines = cleanText.split('\n');
   const results = [];
   
@@ -545,6 +546,15 @@ function isSafeText(text) {
   return !/^[^=+\-@]/.test(text); // 数式インジェクション対策
 }
 
+function callWithRetry(func, maxRetries, delay) {
+  for (let i = 0; i < maxRetries; i++) {
+    try { return func(); } catch (e) {
+      if (i === maxRetries - 1) throw e;
+      Utilities.sleep(delay);
+    }
+  }
+}
+
 // ダイアログ用: フォルダ一覧取得
 function getRecentFolders() {
   const folders = DriveApp.searchFolders('trashed=false');
@@ -579,4 +589,28 @@ function getPDFFilesInFolder(folderId) {
   } catch (e) {
     throw new Error(`フォルダ読み込みエラー: ${e.message}`);
   }
+}
+
+// =================================================================================
+// ヘルパー関数 (旧コードより移植 - parseItemValueCsvResultを追加)
+// =================================================================================
+function parseItemValueCsvResult(text) {
+  // 4列 (項目, 2ago, prev, curr)
+  // ` ``` ` の文字列を直接指定
+  const lines = text.replace("```csv", '').replace("```", '').trim().split('\n');
+  const results = [];
+  for (const line of lines) {
+    const parts = line.split(',');
+    if (parts.length >= 4) {
+      const item = normalizeJapaneseText(parts[0]);
+      if (!isSafeText(item)) continue;
+      results.push([
+        item,
+        parseJapaneseNumber(parts[1]),
+        parseJapaneseNumber(parts[2]),
+        parseJapaneseNumber(parts[3])
+      ]);
+    }
+  }
+  return results;
 }
